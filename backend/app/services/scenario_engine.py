@@ -384,8 +384,10 @@ async def execute_scenario(
 
             elif node_type == "switch":
                 # Switch node: route based on rules WITHOUT calling GigaChat
+                # mode="first" (default) — pick first matching rule
+                # mode="all" — activate ALL matching rules (multi-branch)
                 config = node.get("data", {})
-                field = config.get("field", "").strip()  # e.g. "ТИП" or empty (match full text)
+                mode = config.get("mode", "all")  # "first" or "all"
                 rules_raw = config.get("rules", "[]")
                 try:
                     import json as _json
@@ -395,32 +397,36 @@ async def execute_scenario(
 
                 # Evaluate rules against previous_output
                 text_to_match = previous_output.lower()
-                matched_rule = None
+                matched_labels: list[str] = []
                 for rule in rules:
                     value = (rule.get("value", "") or "").strip().lower()
                     operator = rule.get("operator", "contains")
                     label = rule.get("label", value)
 
+                    match = False
                     if operator == "equals" and text_to_match.strip() == value:
-                        matched_rule = label
-                        break
+                        match = True
                     elif operator == "contains" and value in text_to_match:
-                        matched_rule = label
-                        break
+                        match = True
                     elif operator == "startswith" and text_to_match.strip().startswith(value):
-                        matched_rule = label
-                        break
+                        match = True
+
+                    if match:
+                        matched_labels.append(label)
+                        if mode == "first":
+                            break
 
                 # Route edges
                 outgoing = successors.get(node_id, [])
                 chosen_targets: set[str] = set()
                 unchosen_targets: set[str] = set()
 
+                matched_lower = {m.lower() for m in matched_labels}
                 for target_id in outgoing:
                     edge_data = edge_map.get((node_id, target_id), {})
                     edge_label = (edge_data.get("label", "") or "").strip()
 
-                    if matched_rule and edge_label.lower() == matched_rule.lower():
+                    if edge_label.lower() in matched_lower:
                         chosen_targets.add(target_id)
                     elif edge_label.lower() in ("else", "прочее", "другое", "иначе", "*", "default"):
                         pass  # handle below
@@ -438,10 +444,10 @@ async def execute_scenario(
                     descendants = _get_all_descendants(unchosen_id, dict(successors))
                     skipped_nodes.update(descendants)
 
-                output = f"Switch → {matched_rule or 'default'}"
+                output = f"Switch → {', '.join(matched_labels) if matched_labels else 'default'}"
                 yield {
                     "type": "switch_result", "node_id": node_id,
-                    "matched_rule": matched_rule or "default",
+                    "matched_rule": ', '.join(matched_labels) if matched_labels else 'default',
                     "node_label": node_label,
                 }
 
