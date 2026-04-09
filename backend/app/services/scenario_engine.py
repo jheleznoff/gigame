@@ -382,6 +382,141 @@ async def execute_scenario(
                     "node_label": node_label,
                 }
 
+            elif node_type == "switch":
+                # Switch node: route based on rules WITHOUT calling GigaChat
+                config = node.get("data", {})
+                field = config.get("field", "").strip()  # e.g. "ТИП" or empty (match full text)
+                rules_raw = config.get("rules", "[]")
+                try:
+                    import json as _json
+                    rules = _json.loads(rules_raw) if isinstance(rules_raw, str) else rules_raw
+                except Exception:
+                    rules = []
+
+                # Evaluate rules against previous_output
+                text_to_match = previous_output.lower()
+                matched_rule = None
+                for rule in rules:
+                    value = (rule.get("value", "") or "").strip().lower()
+                    operator = rule.get("operator", "contains")
+                    label = rule.get("label", value)
+
+                    if operator == "equals" and text_to_match.strip() == value:
+                        matched_rule = label
+                        break
+                    elif operator == "contains" and value in text_to_match:
+                        matched_rule = label
+                        break
+                    elif operator == "startswith" and text_to_match.strip().startswith(value):
+                        matched_rule = label
+                        break
+
+                # Route edges
+                outgoing = successors.get(node_id, [])
+                chosen_targets: set[str] = set()
+                unchosen_targets: set[str] = set()
+
+                for target_id in outgoing:
+                    edge_data = edge_map.get((node_id, target_id), {})
+                    edge_label = (edge_data.get("label", "") or "").strip()
+
+                    if matched_rule and edge_label.lower() == matched_rule.lower():
+                        chosen_targets.add(target_id)
+                    elif edge_label.lower() in ("else", "прочее", "другое", "иначе", "*", "default"):
+                        pass  # handle below
+                    elif edge_label:
+                        unchosen_targets.add(target_id)
+
+                if not chosen_targets:
+                    for target_id in outgoing:
+                        edge_data = edge_map.get((node_id, target_id), {})
+                        edge_label = (edge_data.get("label", "") or "").strip().lower()
+                        if edge_label in ("else", "прочее", "другое", "иначе", "*", "default") or not edge_label:
+                            chosen_targets.add(target_id)
+
+                for unchosen_id in unchosen_targets - chosen_targets:
+                    descendants = _get_all_descendants(unchosen_id, dict(successors))
+                    skipped_nodes.update(descendants)
+
+                output = f"Switch → {matched_rule or 'default'}"
+                yield {
+                    "type": "switch_result", "node_id": node_id,
+                    "matched_rule": matched_rule or "default",
+                    "node_label": node_label,
+                }
+
+            elif node_type == "if_node":
+                # If node: binary routing (true/false) WITHOUT calling GigaChat
+                config = node.get("data", {})
+                field = config.get("field", "").strip()
+                operator = config.get("operator", "contains")
+                compare_value = config.get("value", "").strip()
+
+                text_to_check = previous_output
+                # If field specified, try to extract it from structured output
+                if field:
+                    for line in previous_output.split("\n"):
+                        if field.lower() in line.lower():
+                            text_to_check = line
+                            break
+
+                text_lower = text_to_check.lower()
+                compare_lower = compare_value.lower()
+
+                # Evaluate condition
+                if operator == "contains":
+                    condition_met = compare_lower in text_lower
+                elif operator == "not_contains":
+                    condition_met = compare_lower not in text_lower
+                elif operator == "equals":
+                    condition_met = text_lower.strip() == compare_lower
+                elif operator == "greater_than":
+                    try:
+                        # Extract numbers from text
+                        import re
+                        nums = re.findall(r'[\d\s]+[,.]?\d*', text_to_check.replace(' ', ''))
+                        val = float(nums[0].replace(',', '.').replace(' ', '')) if nums else 0
+                        threshold = float(compare_value.replace(',', '.').replace(' ', ''))
+                        condition_met = val > threshold
+                    except Exception:
+                        condition_met = False
+                elif operator == "less_than":
+                    try:
+                        import re
+                        nums = re.findall(r'[\d\s]+[,.]?\d*', text_to_check.replace(' ', ''))
+                        val = float(nums[0].replace(',', '.').replace(' ', '')) if nums else 0
+                        threshold = float(compare_value.replace(',', '.').replace(' ', ''))
+                        condition_met = val < threshold
+                    except Exception:
+                        condition_met = False
+                else:
+                    condition_met = compare_lower in text_lower
+
+                # Route: edges labeled "true"/"да" go one way, "false"/"нет" go other
+                outgoing = successors.get(node_id, [])
+                for target_id in outgoing:
+                    edge_data = edge_map.get((node_id, target_id), {})
+                    edge_label = (edge_data.get("label", "") or "").strip().lower()
+
+                    is_true_branch = edge_label in ("true", "да", "истина", "yes")
+                    is_false_branch = edge_label in ("false", "нет", "ложь", "no")
+
+                    if is_true_branch and not condition_met:
+                        descendants = _get_all_descendants(target_id, dict(successors))
+                        skipped_nodes.update(descendants)
+                    elif is_false_branch and condition_met:
+                        descendants = _get_all_descendants(target_id, dict(successors))
+                        skipped_nodes.update(descendants)
+
+                branch_name = "true" if condition_met else "false"
+                output = f"If ({field} {operator} {compare_value}) → {branch_name}"
+                yield {
+                    "type": "if_result", "node_id": node_id,
+                    "condition_met": condition_met,
+                    "branch": branch_name,
+                    "node_label": node_label,
+                }
+
             else:
                 prompt = _build_prompt(node, input_data)
                 output = await _async_chat_completion([

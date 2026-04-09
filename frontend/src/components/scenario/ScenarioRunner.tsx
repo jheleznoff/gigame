@@ -128,6 +128,19 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
           addLog(`🔀 ${condLabel}: ветка "${branch}"`, 'iter');
         }
 
+        if (event.type === 'switch_result') {
+          const rule = event.matched_rule as string;
+          const lbl = (event.node_label as string) || 'Switch';
+          addLog(`🔀 ${lbl} → "${rule}"`, 'iter');
+        }
+
+        if (event.type === 'if_result') {
+          const branch = event.branch as string;
+          const met = event.condition_met as boolean;
+          const lbl = (event.node_label as string) || 'If';
+          addLog(`${met ? '✅' : '❌'} ${lbl} → ${branch}`, met ? 'done' : 'info');
+        }
+
         if (event.type === 'loop_progress') {
           const detail = event.detail as string || '';
           if (detail.startsWith('branch:')) {

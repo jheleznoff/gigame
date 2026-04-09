@@ -14,6 +14,8 @@ const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
   loop: { label: 'Цикл', color: 'bg-[#00897b]' },
   condition: { label: 'Условие', color: 'bg-[#e53935]' },
   loop_subgraph: { label: 'Цикл + ветки', color: 'bg-[#6a1b9a]' },
+  switch: { label: 'Switch', color: 'bg-[#ff6f00]' },
+  if_node: { label: 'If', color: 'bg-[#0277bd]' },
 };
 
 export function NodeConfigPanel() {
@@ -180,6 +182,64 @@ export function NodeConfigPanel() {
                   </div>
                 );
               })}
+            </>
+          )}
+
+          {node.type === 'switch' && (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                Правила маршрутизации (JSON)
+              </label>
+              <Textarea
+                value={data.rules || '[]'}
+                onChange={(e) => updateNodeData(node.id, { rules: e.target.value })}
+                placeholder={'[\n  {"value": "КП", "operator": "contains", "label": "КП"},\n  {"value": "ПЗ", "operator": "contains", "label": "ПЗ"}\n]'}
+                className="min-h-[120px] rounded-xl text-xs font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                operator: contains, equals, startswith<br/>
+                label → метка ребра. Без GigaChat.
+              </p>
+            </div>
+          )}
+
+          {node.type === 'if_node' && (
+            <>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Поле (необяз.)</label>
+                <Input
+                  value={data.field || ''}
+                  onChange={(e) => updateNodeData(node.id, { field: e.target.value })}
+                  placeholder="ТИП, НМЦД, статус..."
+                  className="rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Оператор</label>
+                <select
+                  value={data.operator || 'contains'}
+                  onChange={(e) => updateNodeData(node.id, { operator: e.target.value })}
+                  className="w-full text-xs bg-background border border-border rounded-xl px-2.5 py-2 text-foreground"
+                >
+                  <option value="contains">содержит</option>
+                  <option value="not_contains">не содержит</option>
+                  <option value="equals">равно</option>
+                  <option value="greater_than">больше чем</option>
+                  <option value="less_than">меньше чем</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Значение</label>
+                <Input
+                  value={data.value || ''}
+                  onChange={(e) => updateNodeData(node.id, { value: e.target.value })}
+                  placeholder="КП, 1000000, ошибка..."
+                  className="rounded-xl"
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Рёбра: «true»/«да» и «false»/«нет». Без GigaChat.
+              </p>
             </>
           )}
         </>

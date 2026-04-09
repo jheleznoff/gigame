@@ -46,8 +46,10 @@ export function ScenarioEditorPage() {
   const handleConnect = useCallback(
     (connection: Connection) => {
       const sourceNode = nodes.find((n) => n.id === connection.source);
-      if (sourceNode?.type === 'condition') {
-        const label = prompt('Название ветки (например: ТЗ, КП, Прочее):');
+      const branchingTypes = ['condition', 'switch', 'if_node'];
+      if (sourceNode && branchingTypes.includes(sourceNode.type || '')) {
+        const hint = sourceNode.type === 'if_node' ? 'true / false:' : 'Название ветки (например: ТЗ, КП, Прочее):';
+        const label = prompt(hint);
         if (label === null) return; // cancelled
         // Add edge with label data via store, then patch data
         storeOnConnect(connection);

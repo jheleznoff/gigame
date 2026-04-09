@@ -33,6 +33,14 @@ const NODE_STYLES: Record<string, { bg: string; border: string; iconBg: string; 
     bg: 'bg-white', border: 'border-[#6a1b9a]', iconBg: 'bg-[#6a1b9a]', label: 'Цикл + ветки',
     icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M17 3l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 21l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>,
   },
+  switch: {
+    bg: 'bg-white', border: 'border-[#ff6f00]', iconBg: 'bg-[#ff6f00]', label: 'Switch',
+    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M18 8l4 4-4 4"/><path d="M2 12h20"/><path d="M18 4l4 4"/><path d="M18 20l4-4"/></svg>,
+  },
+  if_node: {
+    bg: 'bg-white', border: 'border-[#0277bd]', iconBg: 'bg-[#0277bd]', label: 'If',
+    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 3v6"/><path d="M6 15l6-6 6 6"/><path d="M6 21h5"/><path d="M13 21h5"/></svg>,
+  },
 };
 
 export function ScenarioNode({ data, type, selected }: NodeProps) {
@@ -86,4 +94,6 @@ export const nodeTypes = {
   loop: ScenarioNode,
   condition: ScenarioNode,
   loop_subgraph: ScenarioNode,
+  switch: ScenarioNode,
+  if_node: ScenarioNode,
 };
