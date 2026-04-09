@@ -1,0 +1,203 @@
+import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { useScenarioStore } from '@/stores/scenarioStore';
+import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+
+const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
+  input: { label: 'Вход', color: 'bg-[#21a038]' },
+  output: { label: 'Выход', color: 'bg-[#21a038]' },
+  classification: { label: 'Классификация', color: 'bg-[#f57c00]' },
+  extraction: { label: 'Извлечение', color: 'bg-[#1976d2]' },
+  processing: { label: 'Обработка', color: 'bg-[#7b1fa2]' },
+  loop: { label: 'Цикл', color: 'bg-[#00897b]' },
+  condition: { label: 'Условие', color: 'bg-[#e53935]' },
+  loop_subgraph: { label: 'Цикл + ветки', color: 'bg-[#6a1b9a]' },
+};
+
+export function NodeConfigPanel() {
+  const { nodes, selectedNodeId, updateNodeData, deleteNode, selectNode } =
+    useScenarioStore();
+  const [showPreview, setShowPreview] = useState(false);
+
+  const node = nodes.find((n) => n.id === selectedNodeId);
+  if (!node) {
+    return (
+      <div className="w-72 bg-card border-l border-border p-5 flex flex-col items-center justify-center text-center">
+        <div className="w-12 h-12 rounded-full bg-accent flex items-center justify-center mb-3">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
+            <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
+        </div>
+        <p className="text-sm text-muted-foreground">Выберите ноду<br/>для настройки</p>
+      </div>
+    );
+  }
+
+  const data = node.data as Record<string, string>;
+  const isIO = node.type === 'input' || node.type === 'output';
+  const config = TYPE_CONFIG[node.type || ''] || TYPE_CONFIG.processing;
+
+  return (
+    <div className="w-72 bg-card border-l border-border p-5 space-y-5 overflow-y-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className={`w-3 h-3 rounded-full ${config.color}`} />
+          <h3 className="text-sm font-semibold">{config.label}</h3>
+        </div>
+        <button
+          onClick={() => selectNode(null)}
+          className="w-6 h-6 rounded-lg hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      {/* Name */}
+      <div>
+        <label className="text-xs font-medium text-muted-foreground block mb-1.5">Название</label>
+        <Input
+          value={data.label || ''}
+          onChange={(e) => updateNodeData(node.id, { label: e.target.value })}
+          placeholder={config.label}
+          className="rounded-xl"
+        />
+      </div>
+
+      {!isIO && (
+        <>
+          {/* Prompt */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Промпт</label>
+              {data.prompt && (
+                <button
+                  onClick={() => setShowPreview(!showPreview)}
+                  className="text-[10px] text-[#1976d2] hover:underline"
+                >
+                  {showPreview ? 'Редактор' : 'Превью'}
+                </button>
+              )}
+            </div>
+            {showPreview ? (
+              <div className="min-h-[140px] rounded-xl border border-border bg-background p-3 text-sm prose prose-sm max-w-none overflow-y-auto">
+                <ReactMarkdown>{data.prompt || ''}</ReactMarkdown>
+              </div>
+            ) : (
+              <Textarea
+                value={data.prompt || ''}
+                onChange={(e) => updateNodeData(node.id, { prompt: e.target.value })}
+                placeholder="Инструкции для GigaChat..."
+                className="min-h-[140px] rounded-xl text-sm"
+              />
+            )}
+          </div>
+
+          {node.type === 'classification' && (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                Категории
+              </label>
+              <Input
+                value={data.categories || ''}
+                onChange={(e) => updateNodeData(node.id, { categories: e.target.value })}
+                placeholder="ТЗ, КП, Договор"
+                className="rounded-xl"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">Через запятую</p>
+            </div>
+          )}
+
+          {node.type === 'extraction' && (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                Поля для извлечения
+              </label>
+              <Input
+                value={data.fields || ''}
+                onChange={(e) => updateNodeData(node.id, { fields: e.target.value })}
+                placeholder="название, цена, срок"
+                className="rounded-xl"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">Через запятую</p>
+            </div>
+          )}
+
+          {node.type === 'condition' && (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                Ветки (варианты)
+              </label>
+              <Input
+                value={data.branches || ''}
+                onChange={(e) => updateNodeData(node.id, { branches: e.target.value })}
+                placeholder="ТЗ, КП, Прочее"
+                className="rounded-xl"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Через запятую. Используйте эти же названия как метки рёбер.
+                <br />Ветка "Прочее" / "else" — fallback.
+              </p>
+            </div>
+          )}
+
+          {node.type === 'loop_subgraph' && (
+            <>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                  Ветки (типы документов)
+                </label>
+                <Input
+                  value={data.branches || ''}
+                  onChange={(e) => updateNodeData(node.id, { branches: e.target.value })}
+                  placeholder="ПЗ, КП, ПРИКАЗ"
+                  className="rounded-xl"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">Через запятую</p>
+              </div>
+              {data.branches && data.branches.split(',').map((branch: string) => {
+                const b = branch.trim();
+                if (!b) return null;
+                const prompts = (() => { try { return JSON.parse(data.branch_prompts || '{}'); } catch { return {}; } })();
+                return (
+                  <div key={b}>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                      Промпт ветки «{b}»
+                    </label>
+                    <Textarea
+                      value={prompts[b] || ''}
+                      onChange={(e) => {
+                        const updated = { ...prompts, [b]: e.target.value };
+                        updateNodeData(node.id, { branch_prompts: JSON.stringify(updated) });
+                      }}
+                      placeholder={`Инструкция для документов типа ${b}...`}
+                      className="min-h-[80px] rounded-xl text-xs"
+                    />
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </>
+      )}
+
+      {!isIO && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full rounded-xl text-destructive hover:bg-red-50 border-red-200"
+          onClick={() => deleteNode(node.id)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1.5">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          Удалить ноду
+        </Button>
+      )}
+    </div>
+  );
+}
