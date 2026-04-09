@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+backend/venv/
+backend/.venv/
+backend/data/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Env
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Chroma
+data/chroma/
+
+# Test files
+test_*.txt
+test_docs/
+
+# Claude
+.claude/

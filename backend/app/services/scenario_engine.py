@@ -1,0 +1,433 @@
+"""Scenario execution engine — traverses the node graph and executes each step."""
+
+import asyncio
+import logging
+from collections import defaultdict
+from collections.abc import AsyncGenerator
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from functools import partial
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.scenario import ScenarioRun, ScenarioRunStep
+from app.services import gigachat_client
+
+_executor = ThreadPoolExecutor(max_workers=2)
+
+logger = logging.getLogger(__name__)
+
+
+async def _async_chat_completion(messages: list[dict[str, str]]) -> str:
+    """Run blocking GigaChat call in a thread pool to avoid blocking the event loop."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        _executor, partial(gigachat_client.chat_completion, messages)
+    )
+
+
+def _topological_sort(nodes: list[dict], edges: list[dict]) -> list[str]:
+    """Sort node IDs in execution order based on edges."""
+    graph: dict[str, list[str]] = defaultdict(list)
+    in_degree: dict[str, int] = {n["id"]: 0 for n in nodes}
+
+    for edge in edges:
+        src, tgt = edge["source"], edge["target"]
+        graph[src].append(tgt)
+        in_degree[tgt] = in_degree.get(tgt, 0) + 1
+
+    queue = [nid for nid, deg in in_degree.items() if deg == 0]
+    result = []
+    while queue:
+        nid = queue.pop(0)
+        result.append(nid)
+        for neighbor in graph[nid]:
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    return result
+
+
+def _get_all_descendants(node_id: str, graph: dict[str, list[str]]) -> set[str]:
+    """Get all nodes reachable from node_id via DFS."""
+    visited: set[str] = set()
+    stack = [node_id]
+    while stack:
+        nid = stack.pop()
+        if nid in visited:
+            continue
+        visited.add(nid)
+        stack.extend(graph.get(nid, []))
+    return visited
+
+
+def _build_prompt(node: dict, input_data: dict) -> str:
+    """Build a prompt for a node based on its type and config."""
+    node_type = node.get("type", "")
+    config = node.get("data", {})
+    prompt_template = config.get("prompt", "")
+    documents_text = input_data.get("documents_text", "")
+    previous_output = input_data.get("previous_output", "")
+
+    MAX_CONTEXT = 30000
+    context_parts = []
+    if documents_text:
+        doc_text = documents_text
+        if len(doc_text) > MAX_CONTEXT:
+            doc_text = doc_text[:MAX_CONTEXT] + "\n\n[... документы обрезаны ...]"
+        context_parts.append(f"Документы:\n{doc_text}")
+    if previous_output:
+        prev = previous_output
+        if len(prev) > MAX_CONTEXT:
+            prev = prev[:MAX_CONTEXT] + "\n\n[... обрезано ...]"
+        context_parts.append(f"Результат предыдущего шага:\n{prev}")
+
+    context = "\n\n".join(context_parts)
+
+    if node_type == "classification":
+        categories = config.get("categories", "")
+        return (
+            f"{prompt_template}\n\n"
+            f"Категории: {categories}\n\n"
+            f"{context}\n\n"
+            "Определи категорию и верни только название категории."
+        )
+    elif node_type == "extraction":
+        fields = config.get("fields", "")
+        return (
+            f"{prompt_template}\n\n"
+            f"Извлеки следующие поля: {fields}\n\n"
+            f"{context}\n\n"
+            "Верни результат в формате JSON."
+        )
+    elif node_type == "condition":
+        branches = config.get("branches", "")
+        return (
+            f"{prompt_template}\n\n"
+            f"Возможные варианты: {branches}\n\n"
+            f"{context}\n\n"
+            f"Проанализируй и верни ТОЛЬКО одно слово — название подходящего варианта из списка: {branches}. "
+            "Ничего больше не пиши, только название варианта."
+        )
+    elif node_type == "processing":
+        return f"{prompt_template}\n\n{context}"
+    elif node_type in ("loop", "loop_subgraph"):
+        return f"{prompt_template}\n\n{context}"
+    else:
+        return f"{prompt_template}\n\n{context}" if context else prompt_template
+
+
+async def execute_scenario(
+    db: AsyncSession,
+    run: ScenarioRun,
+    graph_data: dict,
+    documents_text: str,
+) -> AsyncGenerator[dict, None]:
+    """Execute a scenario graph and yield progress events."""
+    nodes = graph_data.get("nodes", [])
+    edges = graph_data.get("edges", [])
+    node_map = {n["id"]: n for n in nodes}
+
+    sorted_ids = _topological_sort(nodes, edges)
+
+    run.status = "running"
+    await db.commit()
+    yield {"type": "status", "run_id": run.id, "status": "running"}
+
+    # Track outputs per node
+    node_outputs: dict[str, str] = {}
+
+    # Track skipped nodes (from condition branches not taken)
+    skipped_nodes: set[str] = set()
+
+    # Build graph structures
+    successors: dict[str, list[str]] = defaultdict(list)
+    predecessors: dict[str, list[str]] = defaultdict(list)
+    # Map: (source, target) -> edge data
+    edge_map: dict[tuple[str, str], dict] = {}
+    for edge in edges:
+        src, tgt = edge["source"], edge["target"]
+        successors[src].append(tgt)
+        predecessors[tgt].append(src)
+        edge_map[(src, tgt)] = edge.get("data", {}) or {}
+
+    for node_id in sorted_ids:
+        node = node_map.get(node_id)
+        if not node:
+            continue
+
+        node_type = node.get("type", "unknown")
+        node_label = node.get("data", {}).get("label", "") or node_type
+        total_nodes = len(sorted_ids)
+        node_index = sorted_ids.index(node_id) + 1
+
+        # Check if this node was skipped by a condition
+        if node_id in skipped_nodes:
+            yield {
+                "type": "node_status", "node_id": node_id,
+                "node_label": node_label, "node_type": node_type,
+                "status": "skipped", "step": node_index, "total": total_nodes,
+            }
+            continue
+
+        # Skip input/output nodes
+        if node_type == "input":
+            node_outputs[node_id] = documents_text
+            yield {"type": "node_status", "node_id": node_id, "node_label": node_label, "node_type": node_type, "status": "completed", "step": node_index, "total": total_nodes}
+            continue
+        if node_type == "output":
+            prev = predecessors.get(node_id, [])
+            # Take output from the first non-skipped predecessor
+            output = ""
+            for pid in prev:
+                if pid not in skipped_nodes and pid in node_outputs:
+                    output = node_outputs[pid]
+                    break
+            node_outputs[node_id] = output
+            yield {"type": "node_status", "node_id": node_id, "node_label": node_label, "node_type": node_type, "status": "completed", "step": node_index, "total": total_nodes}
+            continue
+
+        # Create step record
+        step = ScenarioRunStep(
+            run_id=run.id,
+            node_id=node_id,
+            node_type=node_type,
+            status="running",
+        )
+        db.add(step)
+        await db.commit()
+        await db.refresh(step)
+
+        yield {"type": "node_status", "node_id": node_id, "node_label": node_label, "node_type": node_type, "status": "running", "step": node_index, "total": total_nodes}
+
+        # Gather input from non-skipped predecessors
+        prev_ids = predecessors.get(node_id, [])
+        previous_output = "\n\n".join(
+            node_outputs[pid] for pid in prev_ids
+            if pid in node_outputs and pid not in skipped_nodes
+        )
+
+        input_data = {
+            "documents_text": documents_text,
+            "previous_output": previous_output,
+        }
+
+        try:
+            # Handle different node types
+            if node_type == "loop":
+                docs = documents_text.split("---") if documents_text else [documents_text]
+                docs = [d.strip() for d in docs if d.strip()]
+                loop_results = []
+                for i, doc_part in enumerate(docs):
+                    loop_input = {"documents_text": doc_part, "previous_output": ""}
+                    prompt = _build_prompt(node, loop_input)
+                    result = await _async_chat_completion([
+                        {"role": "user", "content": prompt}
+                    ])
+                    loop_results.append(f"Документ {i + 1}:\n{result}")
+                    yield {"type": "loop_progress", "node_id": node_id, "iteration": i + 1, "total": len(docs)}
+                    if i < len(docs) - 1:
+                        await asyncio.sleep(1)
+                output = "\n\n".join(loop_results)
+
+            elif node_type == "loop_subgraph":
+                # Per-item branching: classify each doc, then run branch-specific prompt
+                config = node.get("data", {})
+                branches_str = config.get("branches", "")
+                branch_names = [b.strip() for b in branches_str.split(",") if b.strip()]
+
+                # Parse branch_prompts from config (JSON string → dict)
+                branch_prompts_raw = config.get("branch_prompts", "{}")
+                try:
+                    if isinstance(branch_prompts_raw, str):
+                        import json as _json
+                        branch_prompts = _json.loads(branch_prompts_raw)
+                    else:
+                        branch_prompts = branch_prompts_raw
+                except Exception:
+                    branch_prompts = {}
+
+                docs = documents_text.split("---") if documents_text else [documents_text]
+                docs = [d.strip() for d in docs if d.strip()]
+
+                # Accumulate results by branch
+                branch_results: dict[str, list[str]] = {b: [] for b in branch_names}
+                all_results: list[str] = []
+
+                for i, doc_part in enumerate(docs):
+                    # Step 1: classify + extract with the main prompt
+                    loop_input = {"documents_text": doc_part, "previous_output": ""}
+                    prompt = _build_prompt(node, loop_input)
+                    classify_result = await _async_chat_completion([
+                        {"role": "user", "content": prompt}
+                    ])
+
+                    yield {
+                        "type": "loop_progress", "node_id": node_id,
+                        "iteration": i + 1, "total": len(docs),
+                        "detail": "classify",
+                    }
+
+                    # Step 2: determine which branch
+                    matched_branch = None
+                    classify_lower = classify_result.lower()
+                    for bname in branch_names:
+                        if bname.lower() in classify_lower:
+                            matched_branch = bname
+                            break
+
+                    if not matched_branch:
+                        # Check for default/else branch
+                        for bname in branch_names:
+                            if bname.lower() in ("прочее", "else", "другое", "*"):
+                                matched_branch = bname
+                                break
+
+                    yield {
+                        "type": "loop_branch", "node_id": node_id,
+                        "iteration": i + 1, "branch": matched_branch or "—",
+                        "detail": f"doc {i+1} → {matched_branch or 'no match'}",
+                    }
+
+                    # Step 3: run branch-specific prompt if it exists
+                    branch_prompt_template = branch_prompts.get(matched_branch or "", "")
+                    if branch_prompt_template and matched_branch:
+                        branch_context = (
+                            f"Документ:\n{doc_part}\n\n"
+                            f"Результат классификации:\n{classify_result}"
+                        )
+                        full_branch_prompt = f"{branch_prompt_template}\n\n{branch_context}"
+                        branch_result = await _async_chat_completion([
+                            {"role": "user", "content": full_branch_prompt}
+                        ])
+                        branch_results[matched_branch].append(
+                            f"Документ {i + 1}:\n{branch_result}"
+                        )
+                        all_results.append(
+                            f"[{matched_branch}] Документ {i + 1}:\n{branch_result}"
+                        )
+                        yield {
+                            "type": "loop_progress", "node_id": node_id,
+                            "iteration": i + 1, "total": len(docs),
+                            "detail": f"branch:{matched_branch}",
+                        }
+                    else:
+                        # No branch prompt — just store classification result
+                        if matched_branch:
+                            branch_results[matched_branch].append(
+                                f"Документ {i + 1}:\n{classify_result}"
+                            )
+                        all_results.append(
+                            f"[{matched_branch or 'НЕИЗВЕСТНЫЙ'}] Документ {i + 1}:\n{classify_result}"
+                        )
+
+                    if i < len(docs) - 1:
+                        await asyncio.sleep(1)
+
+                # Build structured output
+                output_parts = []
+                for bname in branch_names:
+                    items = branch_results.get(bname, [])
+                    if items:
+                        output_parts.append(f"=== {bname} ({len(items)} документов) ===\n" + "\n\n".join(items))
+                output = "\n\n".join(output_parts) if output_parts else "\n\n".join(all_results)
+
+            elif node_type == "condition":
+                # Condition node: ask GigaChat to pick a branch
+                prompt = _build_prompt(node, input_data)
+                raw_answer = await _async_chat_completion([
+                    {"role": "user", "content": prompt}
+                ])
+                chosen_branch = raw_answer.strip().strip('"').strip("'").strip('.')
+
+                # Find which outgoing edges match the chosen branch
+                outgoing = successors.get(node_id, [])
+                chosen_targets: set[str] = set()
+                unchosen_targets: set[str] = set()
+
+                for target_id in outgoing:
+                    edge_data = edge_map.get((node_id, target_id), {})
+                    edge_label = (edge_data.get("label", "") or "").strip()
+
+                    if edge_label and chosen_branch.lower().find(edge_label.lower()) != -1:
+                        chosen_targets.add(target_id)
+                    elif edge_label.lower() in ("else", "прочее", "другое", "иначе", "*"):
+                        # Wildcard/else branch — chosen only if nothing else matches
+                        pass
+                    elif edge_label:
+                        unchosen_targets.add(target_id)
+
+                # If no specific match, look for else/wildcard branch
+                if not chosen_targets:
+                    for target_id in outgoing:
+                        edge_data = edge_map.get((node_id, target_id), {})
+                        edge_label = (edge_data.get("label", "") or "").strip().lower()
+                        if edge_label in ("else", "прочее", "другое", "иначе", "*"):
+                            chosen_targets.add(target_id)
+                        elif not edge_data.get("label"):
+                            # Unlabeled edge = default
+                            chosen_targets.add(target_id)
+
+                # Mark all descendants of unchosen targets as skipped
+                for unchosen_id in unchosen_targets - chosen_targets:
+                    descendants = _get_all_descendants(unchosen_id, dict(successors))
+                    skipped_nodes.update(descendants)
+
+                output = f"Выбрана ветка: {chosen_branch}"
+
+                yield {
+                    "type": "condition_result", "node_id": node_id,
+                    "chosen_branch": chosen_branch,
+                    "node_label": node_label,
+                }
+
+            else:
+                prompt = _build_prompt(node, input_data)
+                output = await _async_chat_completion([
+                    {"role": "user", "content": prompt}
+                ])
+
+            step.status = "completed"
+            step.input_data = input_data
+            step.output_data = {"result": output}
+            step.prompt_used = prompt if node_type != "loop" else "(loop)"
+            step.completed_at = datetime.utcnow()
+            node_outputs[node_id] = output
+
+            yield {"type": "node_status", "node_id": node_id, "node_label": node_label, "node_type": node_type, "status": "completed", "step": node_index, "total": total_nodes}
+
+        except Exception as e:
+            logger.exception("Node %s failed", node_id)
+            step.status = "failed"
+            step.output_data = {"error": str(e)}
+            step.completed_at = datetime.utcnow()
+            node_outputs[node_id] = ""
+
+            yield {"type": "node_status", "node_id": node_id, "node_label": node_label, "node_type": node_type, "status": "failed", "step": node_index, "total": total_nodes, "error": str(e)}
+
+            run.status = "failed"
+            await db.commit()
+            yield {"type": "status", "run_id": run.id, "status": "failed"}
+            return
+
+        await db.commit()
+
+    # Find output node result
+    output_nodes = [n for n in nodes if n.get("type") == "output"]
+    final_result = ""
+    if output_nodes:
+        for on in output_nodes:
+            r = node_outputs.get(on["id"], "")
+            if r:
+                final_result = r
+                break
+    if not final_result and sorted_ids:
+        final_result = node_outputs.get(sorted_ids[-1], "")
+
+    run.status = "completed"
+    run.result = {"output": final_result}
+    run.completed_at = datetime.utcnow()
+    await db.commit()
+
+    yield {"type": "status", "run_id": run.id, "status": "completed", "result": final_result}
