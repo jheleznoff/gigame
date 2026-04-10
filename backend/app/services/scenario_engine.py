@@ -128,7 +128,7 @@ def _topological_sort(nodes: list[dict], edges: list[dict]) -> list[str]:
 
 
 def _get_all_descendants(node_id: str, graph: dict[str, list[str]]) -> set[str]:
-    """Get all nodes reachable from node_id via DFS."""
+    """Get all nodes reachable from node_id via DFS (including itself)."""
     visited: set[str] = set()
     stack = [node_id]
     while stack:
@@ -138,6 +138,29 @@ def _get_all_descendants(node_id: str, graph: dict[str, list[str]]) -> set[str]:
         visited.add(nid)
         stack.extend(graph.get(nid, []))
     return visited
+
+
+def _get_skip_set(
+    unchosen_targets: set[str],
+    chosen_targets: set[str],
+    successors: dict[str, list[str]],
+) -> set[str]:
+    """Compute nodes that should be skipped after a branching decision.
+
+    A node is skipped only if it is reachable from unchosen branches AND
+    NOT reachable from any chosen branch. This way merge-nodes (e.g. final
+    report that all branches feed into) are NOT skipped — they still
+    receive output from at least one active branch.
+    """
+    skip = set()
+    reachable_from_chosen: set[str] = set()
+    for ct in chosen_targets:
+        reachable_from_chosen |= _get_all_descendants(ct, successors)
+    for ut in unchosen_targets:
+        for n in _get_all_descendants(ut, successors):
+            if n not in reachable_from_chosen:
+                skip.add(n)
+    return skip
 
 
 def _build_prompt(node: dict, input_data: dict) -> str:
@@ -260,12 +283,13 @@ async def execute_scenario(
             continue
         if node_type == "output":
             prev = predecessors.get(node_id, [])
-            # Take output from the first non-skipped predecessor
-            output = ""
-            for pid in prev:
-                if pid not in skipped_nodes and pid in node_outputs:
-                    output = node_outputs[pid]
-                    break
+            # Concatenate output from ALL non-skipped predecessors
+            outputs = [
+                node_outputs[pid]
+                for pid in prev
+                if pid not in skipped_nodes and pid in node_outputs
+            ]
+            output = "\n\n".join(outputs)
             node_outputs[node_id] = output
             yield {"type": "node_status", "node_id": node_id, "node_label": node_label, "node_type": node_type, "status": "completed", "step": node_index, "total": total_nodes}
             continue
@@ -486,10 +510,13 @@ async def execute_scenario(
                             # Unlabeled edge = default
                             chosen_targets.add(target_id)
 
-                # Mark all descendants of unchosen targets as skipped
-                for unchosen_id in unchosen_targets - chosen_targets:
-                    descendants = _get_all_descendants(unchosen_id, dict(successors))
-                    skipped_nodes.update(descendants)
+                # Mark only nodes that are reachable ONLY from unchosen branches.
+                # Merge-nodes (reachable from both chosen and unchosen) are NOT skipped.
+                skipped_nodes |= _get_skip_set(
+                    unchosen_targets - chosen_targets,
+                    chosen_targets,
+                    dict(successors),
+                )
 
                 output = f"Выбрана ветка: {chosen_branch}"
 
@@ -576,9 +603,12 @@ async def execute_scenario(
                             chosen_targets.add(target_id)
                             target_label_map[target_id] = edge_label or "default"
 
-                for unchosen_id in unchosen_targets - chosen_targets:
-                    descendants = _get_all_descendants(unchosen_id, dict(successors))
-                    skipped_nodes.update(descendants)
+                # Skip only nodes reachable ONLY from unchosen branches.
+                skipped_nodes |= _get_skip_set(
+                    unchosen_targets - chosen_targets,
+                    chosen_targets,
+                    dict(successors),
+                )
 
                 # If structured input — populate branch_docs_override per chosen target
                 # so each branch sees ONLY its matching original documents
@@ -653,21 +683,26 @@ async def execute_scenario(
                 else:
                     condition_met = compare_lower in text_lower
 
-                # Route: edges labeled "true"/"да" go one way, "false"/"нет" go other
+                # Route: edges labeled "true"/"да" go one way, "false"/"нет" go other.
+                # Collect chosen vs unchosen and use _get_skip_set so merge nodes survive.
                 outgoing = successors.get(node_id, [])
+                if_chosen: set[str] = set()
+                if_unchosen: set[str] = set()
                 for target_id in outgoing:
                     edge_data = edge_map.get((node_id, target_id), {})
                     edge_label = (edge_data.get("label", "") or "").strip().lower()
-
                     is_true_branch = edge_label in ("true", "да", "истина", "yes")
                     is_false_branch = edge_label in ("false", "нет", "ложь", "no")
 
-                    if is_true_branch and not condition_met:
-                        descendants = _get_all_descendants(target_id, dict(successors))
-                        skipped_nodes.update(descendants)
-                    elif is_false_branch and condition_met:
-                        descendants = _get_all_descendants(target_id, dict(successors))
-                        skipped_nodes.update(descendants)
+                    if is_true_branch:
+                        (if_chosen if condition_met else if_unchosen).add(target_id)
+                    elif is_false_branch:
+                        (if_unchosen if condition_met else if_chosen).add(target_id)
+                    else:
+                        # Unlabeled edge — always taken
+                        if_chosen.add(target_id)
+
+                skipped_nodes |= _get_skip_set(if_unchosen, if_chosen, dict(successors))
 
                 branch_name = "true" if condition_met else "false"
                 output = f"If ({field} {operator} {compare_value}) → {branch_name}"
