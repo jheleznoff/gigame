@@ -22,6 +22,16 @@ export function NodeConfigPanel() {
   const [showPreview, setShowPreview] = useState(false);
 
   const node = nodes.find((n) => n.id === selectedNodeId);
+  const isProcessing = node?.type === 'processing';
+
+  // KB list for the RAG selector (only used by processing nodes).
+  // Must be called before any early return — React hooks rules.
+  const { data: knowledgeBases = [] } = useQuery({
+    queryKey: ['knowledge-bases'],
+    queryFn: () => getKnowledgeBases(),
+    enabled: isProcessing,
+  });
+
   if (!node) {
     return (
       <div className="w-full h-full bg-card border-l border-border p-5 flex flex-col items-center justify-center text-center">
@@ -38,13 +48,6 @@ export function NodeConfigPanel() {
   const data = node.data as Record<string, string>;
   const isIO = node.type === 'input' || node.type === 'output';
   const config = TYPE_CONFIG[node.type || ''] || TYPE_CONFIG.processing;
-
-  // KB list for the RAG selector (only used by processing nodes)
-  const { data: knowledgeBases = [] } = useQuery({
-    queryKey: ['knowledge-bases'],
-    queryFn: () => getKnowledgeBases(),
-    enabled: node.type === 'processing',
-  });
 
   return (
     <div className="w-full h-full bg-card border-l border-border p-5 space-y-5 overflow-y-auto">
