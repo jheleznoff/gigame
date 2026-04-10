@@ -309,10 +309,24 @@ async def execute_scenario(
 
         # Gather input from non-skipped predecessors
         prev_ids = predecessors.get(node_id, [])
-        previous_output = "\n\n".join(
-            node_outputs[pid] for pid in prev_ids
-            if pid in node_outputs and pid not in skipped_nodes
-        )
+        active_outputs: list[str] = []
+        skipped_predecessor_labels: list[str] = []
+        for pid in prev_ids:
+            pnode = node_map.get(pid, {})
+            plabel = pnode.get("data", {}).get("label", "") or pid
+            if pid in skipped_nodes:
+                skipped_predecessor_labels.append(plabel)
+            elif pid in node_outputs:
+                # Tag each predecessor's output so the LLM knows what came from where
+                active_outputs.append(f"=== РЕЗУЛЬТАТ ОТ «{plabel}» ===\n{node_outputs[pid]}")
+
+        parts: list[str] = list(active_outputs)
+        if skipped_predecessor_labels:
+            parts.append(
+                "=== ПРОПУЩЕННЫЕ ВЕТКИ (документ соответствующего типа НЕ ЗАГРУЖЕН) ===\n"
+                + "\n".join(f"- {lbl}" for lbl in skipped_predecessor_labels)
+            )
+        previous_output = "\n\n".join(parts)
 
         # If a previous Switch filtered docs for this node, use the filtered set
         # instead of the global documents_text. This makes branches receive
