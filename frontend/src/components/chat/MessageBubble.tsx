@@ -1,4 +1,4 @@
-import ReactMarkdown from 'react-markdown';
+import { Markdown } from '@/components/ui/markdown';
 
 interface MessageBubbleProps {
   role: 'user' | 'assistant' | 'system';
@@ -42,9 +42,7 @@ export function MessageBubble({ role, content, documentCount = 0 }: MessageBubbl
         {isUser ? (
           <p className="text-sm whitespace-pre-wrap leading-relaxed">{content}</p>
         ) : (
-          <div className="text-sm prose prose-sm max-w-none prose-p:leading-relaxed prose-headings:text-foreground prose-strong:text-foreground">
-            <ReactMarkdown>{content}</ReactMarkdown>
-          </div>
+          <Markdown className="text-sm">{content}</Markdown>
         )}
       </div>
     </div>

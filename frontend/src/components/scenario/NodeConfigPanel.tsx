@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import ReactMarkdown from 'react-markdown';
+import { Markdown } from '@/components/ui/markdown';
 import { useScenarioStore } from '@/stores/scenarioStore';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -94,8 +94,8 @@ export function NodeConfigPanel() {
               )}
             </div>
             {showPreview ? (
-              <div className="min-h-[140px] rounded-xl border border-border bg-background p-3 text-sm prose prose-sm max-w-none overflow-y-auto">
-                <ReactMarkdown>{data.prompt || ''}</ReactMarkdown>
+              <div className="min-h-[140px] rounded-xl border border-border bg-background p-3 overflow-y-auto">
+                <Markdown className="text-sm">{data.prompt || ''}</Markdown>
               </div>
             ) : (
               <Textarea

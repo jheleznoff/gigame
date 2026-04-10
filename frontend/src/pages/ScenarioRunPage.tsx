@@ -2,7 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getScenarioRun } from '@/api/scenarios';
 import { Button } from '@/components/ui/button';
-import ReactMarkdown from 'react-markdown';
+import { Markdown } from '@/components/ui/markdown';
 
 const STATUS_STYLES: Record<string, { label: string; color: string }> = {
   pending: { label: 'Ожидание', color: 'text-gray-500' },
@@ -167,11 +167,9 @@ export function ScenarioRunPage() {
 
       {/* Final result */}
       {run.result && (
-        <div className="border border-border rounded-lg p-4">
-          <h2 className="text-sm font-semibold mb-2">Итоговый результат</h2>
-          <div className="prose prose-sm max-w-none dark:prose-invert">
-            <ReactMarkdown>{run.result.output || ''}</ReactMarkdown>
-          </div>
+        <div className="border border-border rounded-lg p-4 bg-card">
+          <h2 className="text-sm font-semibold mb-3">Итоговый результат</h2>
+          <Markdown>{run.result.output || ''}</Markdown>
         </div>
       )}
     </div>
