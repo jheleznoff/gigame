@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { runScenario, continueScenarioStep, disableScenarioStepMode } from '@/api/scenarios';
 import { Button } from '@/components/ui/button';
+import { useScenarioStore } from '@/stores/scenarioStore';
 
 interface ScenarioRunnerProps {
   scenarioId: string;
@@ -38,6 +39,8 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const setExecStatus = useScenarioStore((s) => s.setExecStatus);
+  const resetExecStatuses = useScenarioStore((s) => s.resetExecStatuses);
   const [files, setFiles] = useState<File[]>([]);
   const [phase, setPhase] = useState<'idle' | 'uploading' | 'running' | 'paused' | 'done' | 'error'>('idle');
   const [log, setLog] = useState<LogEntry[]>([]);
@@ -93,6 +96,7 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
     setStartTime(Date.now());
     setCurrentStep(null);
     setStepHistory([]);
+    resetExecStatuses();
 
     addLog(`Загрузка ${files.length} файл(ов) на сервер...`, 'info');
 
@@ -134,10 +138,16 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
 
         if (event.type === 'node_status') {
           const label = (event.node_label as string) || (event.node_id as string);
+          const nodeId = event.node_id as string;
           const status = event.status as string;
           const step = event.step as number;
           const total = event.total as number;
           if (step && total) setProgress({ step, total });
+
+          // Update visual status on canvas
+          if (nodeId && (status === 'running' || status === 'completed' || status === 'failed' || status === 'skipped')) {
+            setExecStatus(nodeId, status as 'running' | 'completed' | 'failed' | 'skipped');
+          }
 
           if (status === 'running') {
             addLog(`► ${label}`, 'start');
@@ -169,6 +179,8 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
 
         if (event.type === 'step_paused') {
           setPhase('paused');
+          const pausedNodeId = event.node_id as string;
+          if (pausedNodeId) setExecStatus(pausedNodeId, 'paused');
         }
 
         if (event.type === 'condition_result') {

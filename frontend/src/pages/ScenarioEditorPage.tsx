@@ -40,6 +40,7 @@ export function ScenarioEditorPage() {
     selectNode,
     addNode,
     selectedNodeId,
+    execStatuses,
   } = useScenarioStore();
 
   // When connecting from a condition node, prompt for edge label
@@ -168,7 +169,10 @@ export function ScenarioEditorPage() {
         {/* Canvas */}
         <div className="flex-1 bg-[#f7fbf7]">
           <ReactFlow
-            nodes={nodes}
+            nodes={nodes.map((n) => ({
+              ...n,
+              data: { ...n.data, execStatus: execStatuses[n.id] },
+            }))}
             edges={edges.map((e) => e.data?.label ? { ...e, type: 'labeled' } : e)}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}

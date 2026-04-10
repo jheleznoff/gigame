@@ -43,17 +43,49 @@ const NODE_STYLES: Record<string, { bg: string; border: string; iconBg: string; 
   },
 };
 
+// Visual styles per execution status (overrides static border)
+const EXEC_STYLES: Record<string, { ring: string; badge: { bg: string; text: string; label: string } }> = {
+  running: {
+    ring: 'ring-4 ring-[#1976d2]/40 shadow-[0_0_24px_rgba(25,118,210,0.5)] animate-pulse',
+    badge: { bg: 'bg-[#1976d2]', text: 'text-white', label: '⚡ выполняется' },
+  },
+  paused: {
+    ring: 'ring-4 ring-[#ff9800]/50 shadow-[0_0_24px_rgba(255,152,0,0.5)]',
+    badge: { bg: 'bg-[#ff9800]', text: 'text-white', label: '⏸ пауза' },
+  },
+  completed: {
+    ring: 'ring-2 ring-[#21a038]/40',
+    badge: { bg: 'bg-[#21a038]', text: 'text-white', label: '✓' },
+  },
+  failed: {
+    ring: 'ring-4 ring-[#e53935]/50 shadow-[0_0_24px_rgba(229,57,53,0.4)]',
+    badge: { bg: 'bg-[#e53935]', text: 'text-white', label: '✗ ошибка' },
+  },
+  skipped: {
+    ring: 'ring-2 ring-gray-300 opacity-50',
+    badge: { bg: 'bg-gray-400', text: 'text-white', label: '⊘ пропущено' },
+  },
+};
+
 export function ScenarioNode({ data, type, selected }: NodeProps) {
   const style = NODE_STYLES[type || ''] || NODE_STYLES.processing;
-  const label = (data as Record<string, string>).label || style.label;
-  const prompt = (data as Record<string, string>).prompt;
+  const dataObj = data as Record<string, string>;
+  const label = dataObj.label || style.label;
+  const prompt = dataObj.prompt;
+  const execStatus = dataObj.execStatus as string | undefined;
+  const execStyle = execStatus ? EXEC_STYLES[execStatus] : undefined;
 
   return (
     <div
-      className={`rounded-2xl border-2 min-w-[180px] shadow-md transition-shadow ${style.bg} ${style.border} ${
-        selected ? 'shadow-lg ring-2 ring-[#21a038]/30' : 'hover:shadow-lg'
+      className={`relative rounded-2xl border-2 min-w-[180px] shadow-md transition-all ${style.bg} ${style.border} ${
+        execStyle ? execStyle.ring : selected ? 'shadow-lg ring-2 ring-[#21a038]/30' : 'hover:shadow-lg'
       }`}
     >
+      {execStyle && (
+        <div className={`absolute -top-2 left-1/2 -translate-x-1/2 ${execStyle.badge.bg} ${execStyle.badge.text} text-[9px] font-semibold px-2 py-0.5 rounded-full shadow-md whitespace-nowrap z-10`}>
+          {execStyle.badge.label}
+        </div>
+      )}
       {type !== 'input' && (
         <Handle
           type="target"
