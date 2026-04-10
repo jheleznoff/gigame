@@ -36,7 +36,8 @@ export function ScenarioRunPage() {
   const status = STATUS_STYLES[run.status] || STATUS_STYLES.pending;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="h-full overflow-y-auto">
+      <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
         <Button
           variant="outline"
@@ -167,11 +168,12 @@ export function ScenarioRunPage() {
 
       {/* Final result */}
       {run.result && (
-        <div className="border border-border rounded-lg p-4 bg-card">
+        <div className="border border-border rounded-lg p-4 bg-card mb-6">
           <h2 className="text-sm font-semibold mb-3">Итоговый результат</h2>
           <Markdown>{run.result.output || ''}</Markdown>
         </div>
       )}
+      </div>
     </div>
   );
 }
