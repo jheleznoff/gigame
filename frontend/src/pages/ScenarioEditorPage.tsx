@@ -18,6 +18,7 @@ import { edgeTypes } from '@/components/scenario/LabeledEdge';
 import { NodePalette } from '@/components/scenario/NodePalette';
 import { NodeConfigPanel } from '@/components/scenario/NodeConfigPanel';
 import { ScenarioRunner } from '@/components/scenario/ScenarioRunner';
+import { ResizablePanel } from '@/components/scenario/ResizablePanel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
@@ -195,15 +196,22 @@ export function ScenarioEditorPage() {
           </ReactFlow>
         </div>
 
-        {/* Config panel or runner */}
-        {showRunner ? (
-          <ScenarioRunner
-            scenarioId={scenarioId!}
-            onClose={() => setShowRunner(false)}
-          />
-        ) : (
-          <NodeConfigPanel />
-        )}
+        {/* Config panel or runner — resizable */}
+        <ResizablePanel
+          storageKey={showRunner ? 'scenario-runner-width' : 'scenario-config-width'}
+          defaultWidth={showRunner ? 360 : 320}
+          minWidth={260}
+          maxWidth={800}
+        >
+          {showRunner ? (
+            <ScenarioRunner
+              scenarioId={scenarioId!}
+              onClose={() => setShowRunner(false)}
+            />
+          ) : (
+            <NodeConfigPanel />
+          )}
+        </ResizablePanel>
       </div>
     </div>
   );

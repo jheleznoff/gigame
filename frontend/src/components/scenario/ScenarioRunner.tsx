@@ -213,11 +213,8 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
 
   const isActive = phase === 'uploading' || phase === 'running' || phase === 'paused';
 
-  // Wider panel in debug mode to fit step inspector
-  const panelWidth = stepMode || isActive && currentStep ? 'w-[480px]' : 'w-80';
-
   return (
-    <div className={`${panelWidth} bg-card border-l border-border flex flex-col overflow-hidden`}>
+    <div className="w-full h-full bg-card border-l border-border flex flex-col overflow-hidden">
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <h3 className="text-sm font-semibold">

@@ -22,7 +22,7 @@ export function NodeConfigPanel() {
   const node = nodes.find((n) => n.id === selectedNodeId);
   if (!node) {
     return (
-      <div className="w-72 bg-card border-l border-border p-5 flex flex-col items-center justify-center text-center">
+      <div className="w-full h-full bg-card border-l border-border p-5 flex flex-col items-center justify-center text-center">
         <div className="w-12 h-12 rounded-full bg-accent flex items-center justify-center mb-3">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
             <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
@@ -38,7 +38,7 @@ export function NodeConfigPanel() {
   const config = TYPE_CONFIG[node.type || ''] || TYPE_CONFIG.processing;
 
   return (
-    <div className="w-72 bg-card border-l border-border p-5 space-y-5 overflow-y-auto">
+    <div className="w-full h-full bg-card border-l border-border p-5 space-y-5 overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
