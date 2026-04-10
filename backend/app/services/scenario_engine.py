@@ -58,6 +58,44 @@ async def _pause_if_step_mode(run_id: str, step_data: dict) -> dict | None:
     return {"type": "step_paused", **step_data}
 
 
+# Marker format for structured Loop output (classify_strict mode)
+# This lets Switch parse loop results and filter original documents per branch.
+DOC_MARKER_START = "<<<DOC_{idx}|CLASS:{cls}>>>"
+DOC_MARKER_END = "<<<END_DOC_{idx}>>>"
+import re as _re
+_DOC_BLOCK_RE = _re.compile(
+    r"<<<DOC_(\d+)\|CLASS:(.+?)>>>\n(.*?)\n<<<END_DOC_\1>>>",
+    _re.DOTALL,
+)
+
+
+def parse_classified_docs(text: str) -> list[tuple[int, str, str]]:
+    """Parse Loop output that uses DOC_MARKER format.
+
+    Returns list of (doc_index, class_name, original_text) tuples.
+    Empty list if input doesn't contain markers.
+    """
+    if "<<<DOC_" not in text:
+        return []
+    results = []
+    for m in _DOC_BLOCK_RE.finditer(text):
+        idx = int(m.group(1))
+        cls = m.group(2).strip()
+        original = m.group(3).strip()
+        results.append((idx, cls, original))
+    return results
+
+
+def build_filtered_documents(classified: list[tuple[int, str, str]], allowed_classes: set[str]) -> str:
+    """Build a documents_text containing only docs whose class matches allowed_classes."""
+    matching = [
+        f"=== Документ {idx} ({cls}) ===\n{original}"
+        for idx, cls, original in classified
+        if cls.lower() in {c.lower() for c in allowed_classes}
+    ]
+    return "\n\n---\n\n".join(matching)
+
+
 async def _async_chat_completion(messages: list[dict[str, str]]) -> str:
     """Run blocking GigaChat call in a thread pool to avoid blocking the event loop."""
     loop = asyncio.get_event_loop()
@@ -181,6 +219,10 @@ async def execute_scenario(
     # Track skipped nodes (from condition branches not taken)
     skipped_nodes: set[str] = set()
 
+    # Per-node documents_text override (set by Switch when filtering by class)
+    # Maps target node_id → filtered documents text (only matching docs)
+    branch_docs_override: dict[str, str] = {}
+
     # Build graph structures
     successors: dict[str, list[str]] = defaultdict(list)
     predecessors: dict[str, list[str]] = defaultdict(list)
@@ -248,8 +290,13 @@ async def execute_scenario(
             if pid in node_outputs and pid not in skipped_nodes
         )
 
+        # If a previous Switch filtered docs for this node, use the filtered set
+        # instead of the global documents_text. This makes branches receive
+        # ONLY the original text of documents matching their class.
+        effective_documents = branch_docs_override.get(node_id, documents_text)
+
         input_data = {
-            "documents_text": documents_text,
+            "documents_text": effective_documents,
             "previous_output": previous_output,
         }
 
@@ -260,14 +307,43 @@ async def execute_scenario(
                 docs = documents_text.split("---") if documents_text else [documents_text]
                 docs = [d.strip() for d in docs if d.strip()]
                 loop_results = []
+                # classify_strict mode: prompt asks ONLY for class, output uses markers
+                # so downstream Switch can filter original documents per branch
+                classify_strict = node.get("data", {}).get("classify_strict", False)
+                classes_hint = node.get("data", {}).get("classes", "ПЗ, КП, ПРИКАЗ")
+
                 for i, doc_part in enumerate(docs):
-                    loop_input = {"documents_text": doc_part, "previous_output": ""}
-                    prompt = _build_prompt(node, loop_input)
-                    result = await _async_chat_completion([
-                        {"role": "user", "content": prompt}
-                    ])
-                    loop_results.append(f"Документ {i + 1}:\n{result}")
-                    yield {"type": "loop_progress", "node_id": node_id, "iteration": i + 1, "total": len(docs)}
+                    if classify_strict:
+                        # Strict prompt: return ONLY class name, one word
+                        strict_prompt = (
+                            f"Определи тип документа. Верни СТРОГО ОДНО слово — название класса "
+                            f"из списка: {classes_hint}.\n"
+                            f"Не пиши пояснений, не повторяй задание, не добавляй знаков препинания.\n\n"
+                            f"Документ:\n{doc_part}"
+                        )
+                        cls_raw = await _async_chat_completion([
+                            {"role": "user", "content": strict_prompt}
+                        ])
+                        # Extract first non-empty token as class
+                        cls = cls_raw.strip().split()[0].strip('".,:;()[]') if cls_raw.strip() else "UNKNOWN"
+                        # Build structured marker block with original text
+                        loop_results.append(
+                            f"<<<DOC_{i + 1}|CLASS:{cls}>>>\n{doc_part}\n<<<END_DOC_{i + 1}>>>"
+                        )
+                        yield {
+                            "type": "loop_progress", "node_id": node_id,
+                            "iteration": i + 1, "total": len(docs),
+                            "detail": f"classified as {cls}",
+                        }
+                    else:
+                        # Original (analyze) mode: full prompt, free-form result
+                        loop_input = {"documents_text": doc_part, "previous_output": ""}
+                        prompt = _build_prompt(node, loop_input)
+                        result = await _async_chat_completion([
+                            {"role": "user", "content": prompt}
+                        ])
+                        loop_results.append(f"Документ {i + 1}:\n{result}")
+                        yield {"type": "loop_progress", "node_id": node_id, "iteration": i + 1, "total": len(docs)}
                     if i < len(docs) - 1:
                         await asyncio.sleep(1)
                 output = "\n\n".join(loop_results)
@@ -425,8 +501,6 @@ async def execute_scenario(
 
             elif node_type == "switch":
                 # Switch node: route based on rules WITHOUT calling GigaChat
-                # mode="first" (default) — pick first matching rule
-                # mode="all" — activate ALL matching rules (multi-branch)
                 config = node.get("data", {})
                 mode = config.get("mode", "all")  # "first" or "all"
                 rules_raw = config.get("rules", "[]")
@@ -436,26 +510,43 @@ async def execute_scenario(
                 except Exception:
                     rules = []
 
-                # Evaluate rules against previous_output
-                text_to_match = previous_output.lower()
+                # Detect structured loop output (classify_strict mode)
+                # Format: <<<DOC_N|CLASS:X>>> ... <<<END_DOC_N>>>
+                classified = parse_classified_docs(previous_output)
+                use_doc_filtering = len(classified) > 0
+
+                # Evaluate rules — match against classes if structured, else against text
                 matched_labels: list[str] = []
-                for rule in rules:
-                    value = (rule.get("value", "") or "").strip().lower()
-                    operator = rule.get("operator", "contains")
-                    label = rule.get("label", value)
+                if use_doc_filtering:
+                    # Collect distinct classes from classified docs
+                    doc_classes = {cls.lower() for _, cls, _ in classified}
+                    for rule in rules:
+                        value = (rule.get("value", "") or "").strip().lower()
+                        label = rule.get("label", value)
+                        # Match if any classified doc has this class
+                        if any(value in cls or cls in value for cls in doc_classes):
+                            matched_labels.append(label)
+                            if mode == "first":
+                                break
+                else:
+                    text_to_match = previous_output.lower()
+                    for rule in rules:
+                        value = (rule.get("value", "") or "").strip().lower()
+                        operator = rule.get("operator", "contains")
+                        label = rule.get("label", value)
 
-                    match = False
-                    if operator == "equals" and text_to_match.strip() == value:
-                        match = True
-                    elif operator == "contains" and value in text_to_match:
-                        match = True
-                    elif operator == "startswith" and text_to_match.strip().startswith(value):
-                        match = True
+                        match = False
+                        if operator == "equals" and text_to_match.strip() == value:
+                            match = True
+                        elif operator == "contains" and value in text_to_match:
+                            match = True
+                        elif operator == "startswith" and text_to_match.strip().startswith(value):
+                            match = True
 
-                    if match:
-                        matched_labels.append(label)
-                        if mode == "first":
-                            break
+                        if match:
+                            matched_labels.append(label)
+                            if mode == "first":
+                                break
 
                 # Route edges
                 outgoing = successors.get(node_id, [])
@@ -463,12 +554,15 @@ async def execute_scenario(
                 unchosen_targets: set[str] = set()
 
                 matched_lower = {m.lower() for m in matched_labels}
+                # Map: chosen target_id → its edge_label (used for doc filtering)
+                target_label_map: dict[str, str] = {}
                 for target_id in outgoing:
                     edge_data = edge_map.get((node_id, target_id), {})
                     edge_label = (edge_data.get("label", "") or "").strip()
 
                     if edge_label.lower() in matched_lower:
                         chosen_targets.add(target_id)
+                        target_label_map[target_id] = edge_label
                     elif edge_label.lower() in ("else", "прочее", "другое", "иначе", "*", "default"):
                         pass  # handle below
                     elif edge_label:
@@ -480,12 +574,32 @@ async def execute_scenario(
                         edge_label = (edge_data.get("label", "") or "").strip().lower()
                         if edge_label in ("else", "прочее", "другое", "иначе", "*", "default") or not edge_label:
                             chosen_targets.add(target_id)
+                            target_label_map[target_id] = edge_label or "default"
 
                 for unchosen_id in unchosen_targets - chosen_targets:
                     descendants = _get_all_descendants(unchosen_id, dict(successors))
                     skipped_nodes.update(descendants)
 
+                # If structured input — populate branch_docs_override per chosen target
+                # so each branch sees ONLY its matching original documents
+                if use_doc_filtering:
+                    for target_id in chosen_targets:
+                        edge_label = target_label_map.get(target_id, "")
+                        # Find rule labels matching this edge — collect their values
+                        allowed_classes: set[str] = set()
+                        for rule in rules:
+                            r_label = (rule.get("label", "") or "").strip()
+                            if r_label.lower() == edge_label.lower():
+                                allowed_classes.add((rule.get("value", "") or "").strip())
+                        if not allowed_classes:
+                            allowed_classes.add(edge_label)  # fallback
+                        filtered = build_filtered_documents(classified, allowed_classes)
+                        if filtered:
+                            branch_docs_override[target_id] = filtered
+
                 output = f"Switch → {', '.join(matched_labels) if matched_labels else 'default'}"
+                if use_doc_filtering:
+                    output += f"\n[фильтрация документов: {len(classified)} классифицировано → ветки получат только свои]"
                 yield {
                     "type": "switch_result", "node_id": node_id,
                     "matched_rule": ', '.join(matched_labels) if matched_labels else 'default',

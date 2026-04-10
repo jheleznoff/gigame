@@ -129,6 +129,43 @@ export function NodeConfigPanel() {
             </div>
           )}
 
+          {node.type === 'loop' && (
+            <>
+              <div className="border border-border rounded-xl p-3 bg-accent/30">
+                <label className="flex items-center gap-2 cursor-pointer text-xs select-none">
+                  <input
+                    type="checkbox"
+                    checked={data.classify_strict === 'true' || data.classify_strict === true}
+                    onChange={(e) => updateNodeData(node.id, { classify_strict: e.target.checked ? 'true' : '' })}
+                    className="w-3.5 h-3.5 rounded accent-[#00897b]"
+                  />
+                  <span className="font-medium text-foreground">🏷️ Строгая классификация</span>
+                </label>
+                <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+                  GigaChat вернёт ТОЛЬКО название класса (одно слово). Промпт ноды игнорируется.
+                  Оригинальный текст каждого документа сохранится для следующего узла Switch
+                  — он сможет отфильтровать документы по классу и передать только нужные в каждую ветку.
+                </p>
+              </div>
+              {(data.classify_strict === 'true' || data.classify_strict === true) && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                    Возможные классы
+                  </label>
+                  <Input
+                    value={data.classes || ''}
+                    onChange={(e) => updateNodeData(node.id, { classes: e.target.value })}
+                    placeholder="ПЗ, КП, ПРИКАЗ"
+                    className="rounded-xl"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Эти же названия используйте в правилах Switch и метках рёбер
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
           {node.type === 'condition' && (
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1.5">
