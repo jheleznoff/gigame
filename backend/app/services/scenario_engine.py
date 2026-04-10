@@ -11,7 +11,7 @@ from functools import partial
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scenario import ScenarioRun, ScenarioRunStep
-from app.services import gigachat_client
+from app.services import gigachat_client, vector_store
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
@@ -163,9 +163,12 @@ def _get_skip_set(
     return skip
 
 
-def _build_prompt(node: dict, input_data: dict) -> str:
-    """Build a prompt for a node based on its type and config."""
-    node_type = node.get("type", "")
+def _build_prompt(node: dict, input_data: dict, kb_chunks: list[str] | None = None) -> str:
+    """Build a prompt for a node based on its type and config.
+
+    If kb_chunks is provided (from RAG search), they are injected as
+    additional context from the knowledge base.
+    """
     config = node.get("data", {})
     prompt_template = config.get("prompt", "")
     documents_text = input_data.get("documents_text", "")
@@ -183,6 +186,12 @@ def _build_prompt(node: dict, input_data: dict) -> str:
         if len(prev) > MAX_CONTEXT:
             prev = prev[:MAX_CONTEXT] + "\n\n[... обрезано ...]"
         context_parts.append(f"Результат предыдущего шага:\n{prev}")
+    if kb_chunks:
+        joined = "\n\n---\n\n".join(kb_chunks)
+        context_parts.append(
+            "Релевантные фрагменты из базы знаний (используй их для ответа):\n"
+            f"{joined}"
+        )
 
     context = "\n\n".join(context_parts)
 
@@ -191,6 +200,37 @@ def _build_prompt(node: dict, input_data: dict) -> str:
     # saved scenarios) fall back to this generic behavior — effectively
     # treating them as plain processing nodes.
     return f"{prompt_template}\n\n{context}" if context else prompt_template
+
+
+def _rag_search_for_node(node: dict, input_data: dict, top_k: int = 5) -> list[str]:
+    """If the node has a knowledge_base_id set, run similarity search and
+    return the top-k relevant chunks. Returns empty list if not configured
+    or on error.
+    """
+    config = node.get("data", {})
+    kb_id = (config.get("knowledge_base_id") or "").strip()
+    if not kb_id:
+        return []
+
+    # Build a query for embedding: prefer previous_output, fall back to
+    # the node's own prompt template. Limit length to keep embedding cheap.
+    query = (
+        input_data.get("previous_output", "")
+        or config.get("prompt", "")
+        or input_data.get("documents_text", "")
+    )
+    query = (query or "").strip()[:2000]
+    if not query:
+        return []
+
+    try:
+        embedding = gigachat_client.get_embeddings([query])[0]
+        chunks = vector_store.kb_search_similar(kb_id, embedding, top_k=top_k)
+        logger.info("RAG: found %d chunks in KB %s for node %s", len(chunks), kb_id, node.get("id"))
+        return chunks
+    except Exception:
+        logger.exception("RAG search failed for KB %s", kb_id)
+        return []
 
 
 async def execute_scenario(
@@ -548,7 +588,22 @@ async def execute_scenario(
                 }
 
             else:
-                prompt = _build_prompt(node, input_data)
+                # Generic processing node. Optionally augment with RAG from a
+                # knowledge base if the node is configured with knowledge_base_id.
+                kb_chunks: list[str] = []
+                kb_id = (node.get("data", {}).get("knowledge_base_id") or "").strip()
+                if kb_id:
+                    loop = asyncio.get_event_loop()
+                    kb_chunks = await loop.run_in_executor(
+                        _executor, partial(_rag_search_for_node, node, input_data)
+                    )
+                    yield {
+                        "type": "rag_search", "node_id": node_id,
+                        "node_label": node_label,
+                        "kb_id": kb_id,
+                        "chunks_found": len(kb_chunks),
+                    }
+                prompt = _build_prompt(node, input_data, kb_chunks=kb_chunks)
                 output = await _async_chat_completion([
                     {"role": "user", "content": prompt}
                 ])

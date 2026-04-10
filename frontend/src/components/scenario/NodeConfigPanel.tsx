@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { useScenarioStore } from '@/stores/scenarioStore';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { getKnowledgeBases } from '@/api/knowledge-bases';
 
 const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
   input: { label: 'Вход', color: 'bg-[#21a038]' },
@@ -36,6 +38,13 @@ export function NodeConfigPanel() {
   const data = node.data as Record<string, string>;
   const isIO = node.type === 'input' || node.type === 'output';
   const config = TYPE_CONFIG[node.type || ''] || TYPE_CONFIG.processing;
+
+  // KB list for the RAG selector (only used by processing nodes)
+  const { data: knowledgeBases = [] } = useQuery({
+    queryKey: ['knowledge-bases'],
+    queryFn: () => getKnowledgeBases(),
+    enabled: node.type === 'processing',
+  });
 
   return (
     <div className="w-full h-full bg-card border-l border-border p-5 space-y-5 overflow-y-auto">
@@ -94,6 +103,34 @@ export function NodeConfigPanel() {
               />
             )}
           </div>
+
+          {node.type === 'processing' && (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5 flex items-center gap-1.5">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#21a038" strokeWidth="2">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                </svg>
+                База знаний (RAG)
+              </label>
+              <select
+                value={data.knowledge_base_id || ''}
+                onChange={(e) => updateNodeData(node.id, { knowledge_base_id: e.target.value })}
+                className="w-full text-xs bg-background border border-border rounded-xl px-2.5 py-2 text-foreground focus:outline-none focus:ring-1 focus:ring-[#21a038]"
+              >
+                <option value="">Не использовать</option>
+                {knowledgeBases.map((kb) => (
+                  <option key={kb.id} value={kb.id}>{kb.name}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
+                {data.knowledge_base_id
+                  ? 'GigaChat получит релевантные фрагменты из базы знаний как дополнительный контекст (similarity search по результату предыдущего шага).'
+                  : knowledgeBases.length === 0
+                    ? 'Нет доступных баз знаний. Создайте базу в разделе «Базы знаний».'
+                    : 'Выберите базу, чтобы узел автоматически подмешивал релевантные фрагменты в контекст.'}
+              </p>
+            </div>
+          )}
 
           {node.type === 'loop' && (
             <>

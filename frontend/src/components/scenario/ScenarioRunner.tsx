@@ -196,6 +196,12 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
           addLog(`${met ? '✅' : '❌'} ${lbl} → ${branch}`, met ? 'done' : 'info');
         }
 
+        if (event.type === 'rag_search') {
+          const lbl = (event.node_label as string) || '';
+          const count = event.chunks_found as number;
+          addLog(`  📚 ${lbl}: RAG нашёл ${count} фрагмент(ов) в базе знаний`, 'iter');
+        }
+
         if (event.type === 'loop_progress') {
           const detail = event.detail as string || '';
           if (detail.startsWith('classified as')) {
