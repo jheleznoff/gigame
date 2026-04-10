@@ -101,25 +101,61 @@ export function ScenarioRunPage() {
                     {stepStatus.label}
                   </span>
                 </div>
+                {/* Input data (new) */}
+                {step.input_data && typeof step.input_data === 'object' && (() => {
+                  const inp = step.input_data as { documents_text?: string; previous_output?: string };
+                  if (!inp.documents_text && !inp.previous_output) return null;
+                  return (
+                    <details className="mt-2">
+                      <summary className="text-xs text-[#1976d2] cursor-pointer font-medium">
+                        📥 Входные данные
+                      </summary>
+                      <div className="mt-1 space-y-2">
+                        {inp.previous_output && (
+                          <div>
+                            <div className="text-[10px] text-muted-foreground mb-1">Результат предыдущего шага:</div>
+                            <pre className="text-xs bg-muted rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-48">
+                              {inp.previous_output.length > 2000
+                                ? inp.previous_output.slice(0, 2000) + '\n... (' + inp.previous_output.length + ' симв)'
+                                : inp.previous_output}
+                            </pre>
+                          </div>
+                        )}
+                        {inp.documents_text && (
+                          <div>
+                            <div className="text-[10px] text-muted-foreground mb-1">Документы:</div>
+                            <pre className="text-xs bg-muted rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-48">
+                              {inp.documents_text.length > 2000
+                                ? inp.documents_text.slice(0, 2000) + '\n... (' + inp.documents_text.length + ' симв)'
+                                : inp.documents_text}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  );
+                })()}
                 {step.prompt_used && (
                   <details className="mt-2">
-                    <summary className="text-xs text-muted-foreground cursor-pointer">
-                      Промпт
+                    <summary className="text-xs text-[#7b1fa2] cursor-pointer font-medium">
+                      📝 Промпт в GigaChat
                     </summary>
-                    <pre className="text-xs bg-muted rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap">
+                    <pre className="text-xs bg-muted rounded p-2 mt-1 overflow-x-auto whitespace-pre-wrap max-h-64">
                       {step.prompt_used}
                     </pre>
                   </details>
                 )}
                 {step.output_data && (
                   <details className="mt-2" open={step.status === 'completed'}>
-                    <summary className="text-xs text-muted-foreground cursor-pointer">
-                      Результат
+                    <summary className="text-xs text-[#21a038] cursor-pointer font-medium">
+                      📤 Результат
                     </summary>
-                    <div className="text-xs bg-muted rounded p-2 mt-1 whitespace-pre-wrap">
-                      {typeof step.output_data === 'object'
-                        ? JSON.stringify(step.output_data, null, 2)
-                        : String(step.output_data)}
+                    <div className="text-xs bg-muted rounded p-2 mt-1 whitespace-pre-wrap max-h-64 overflow-auto">
+                      {typeof step.output_data === 'object' && step.output_data !== null && 'result' in step.output_data
+                        ? String((step.output_data as { result: unknown }).result)
+                        : typeof step.output_data === 'object'
+                          ? JSON.stringify(step.output_data, null, 2)
+                          : String(step.output_data)}
                     </div>
                   </details>
                 )}

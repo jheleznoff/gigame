@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { runScenario } from '@/api/scenarios';
+import { runScenario, continueScenarioStep, disableScenarioStepMode } from '@/api/scenarios';
 import { Button } from '@/components/ui/button';
 
 interface ScenarioRunnerProps {
@@ -12,6 +12,18 @@ interface LogEntry {
   time: string;
   text: string;
   type: 'info' | 'start' | 'done' | 'error' | 'iter';
+}
+
+interface StepData {
+  stepId?: string;
+  nodeId: string;
+  nodeLabel: string;
+  nodeType: string;
+  inputData?: { documents_text?: string; previous_output?: string };
+  outputData?: { result?: string; error?: string };
+  promptUsed?: string | null;
+  stepIndex?: number;
+  totalSteps?: number;
 }
 
 function formatElapsed(startMs: number): string {
@@ -27,16 +39,19 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
   const [files, setFiles] = useState<File[]>([]);
-  const [phase, setPhase] = useState<'idle' | 'uploading' | 'running' | 'done' | 'error'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'running' | 'paused' | 'done' | 'error'>('idle');
   const [log, setLog] = useState<LogEntry[]>([]);
   const [progress, setProgress] = useState({ step: 0, total: 0 });
   const [startTime, setStartTime] = useState<number>(0);
   const [elapsed, setElapsed] = useState('');
   const [result, setResult] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [stepMode, setStepMode] = useState(false);
+  const [currentStep, setCurrentStep] = useState<StepData | null>(null);
+  const [stepHistory, setStepHistory] = useState<StepData[]>([]);
 
   useEffect(() => {
-    if (phase !== 'uploading' && phase !== 'running') return;
+    if (phase !== 'uploading' && phase !== 'running' && phase !== 'paused') return;
     const iv = setInterval(() => setElapsed(formatElapsed(startTime)), 1000);
     return () => clearInterval(iv);
   }, [phase, startTime]);
@@ -54,6 +69,20 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const handleContinue = async () => {
+    if (!runId) return;
+    setPhase('running');
+    try { await continueScenarioStep(runId); } catch (e) { console.error(e); }
+  };
+
+  const handleSkipStepMode = async () => {
+    if (!runId) return;
+    setPhase('running');
+    try {
+      await disableScenarioStepMode(runId);
+    } catch (e) { console.error(e); }
+  };
+
   const handleRun = async () => {
     if (files.length === 0) return;
     setPhase('uploading');
@@ -62,17 +91,13 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
     setRunId(null);
     setProgress({ step: 0, total: 0 });
     setStartTime(Date.now());
+    setCurrentStep(null);
+    setStepHistory([]);
 
     addLog(`Загрузка ${files.length} файл(ов) на сервер...`, 'info');
 
     try {
-      let gotFirstEvent = false;
-      for await (const event of runScenario(scenarioId, files)) {
-        if (!gotFirstEvent) {
-          gotFirstEvent = true;
-          setPhase('uploading');
-        }
-
+      for await (const event of runScenario(scenarioId, files, stepMode)) {
         if (event.type === 'upload_progress') {
           const fname = event.file as string;
           const cur = event.current as number;
@@ -89,6 +114,10 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
           setPhase('running');
           addLog(`✓ Загружено ${event.count} документ(ов)`, 'done');
           setProgress({ step: 0, total: 0 });
+        }
+
+        if (event.type === 'run_started') {
+          if (event.run_id) setRunId(event.run_id as string);
         }
 
         if (event.type === 'status') {
@@ -120,6 +149,26 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
             const err = (event.error as string) || 'Неизвестная ошибка';
             addLog(`✗ ${label} — ${err.slice(0, 80)}`, 'error');
           }
+        }
+
+        if (event.type === 'step_complete') {
+          const stepData: StepData = {
+            stepId: event.step_id as string,
+            nodeId: event.node_id as string,
+            nodeLabel: (event.node_label as string) || (event.node_id as string),
+            nodeType: (event.node_type as string) || 'unknown',
+            inputData: event.input_data as StepData['inputData'],
+            outputData: event.output_data as StepData['outputData'],
+            promptUsed: event.prompt_used as string | null,
+            stepIndex: event.step_index as number,
+            totalSteps: event.total_steps as number,
+          };
+          setCurrentStep(stepData);
+          setStepHistory(prev => [...prev, stepData]);
+        }
+
+        if (event.type === 'step_paused') {
+          setPhase('paused');
         }
 
         if (event.type === 'condition_result') {
@@ -163,13 +212,18 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
     }
   };
 
-  const isActive = phase === 'uploading' || phase === 'running';
+  const isActive = phase === 'uploading' || phase === 'running' || phase === 'paused';
+
+  // Wider panel in debug mode to fit step inspector
+  const panelWidth = stepMode || isActive && currentStep ? 'w-[480px]' : 'w-80';
 
   return (
-    <div className="w-80 bg-card border-l border-border flex flex-col overflow-hidden">
+    <div className={`${panelWidth} bg-card border-l border-border flex flex-col overflow-hidden`}>
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Запуск</h3>
+        <h3 className="text-sm font-semibold">
+          {phase === 'paused' ? '⏸ Пауза (отладка)' : 'Запуск'}
+        </h3>
         <div className="flex items-center gap-2">
           {isActive && <span className="text-[10px] text-muted-foreground font-mono bg-accent rounded-md px-1.5 py-0.5">{elapsed}</span>}
           <button onClick={onClose} className="w-6 h-6 rounded-lg hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground">
@@ -196,9 +250,85 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
               {phase === 'uploading' ? (
                 <div className="h-full bg-[#1976d2] rounded-full animate-pulse w-full opacity-40" />
               ) : (
-                <div className="h-full bg-[#21a038] rounded-full transition-all duration-700" style={{ width: progress.total > 0 ? `${(progress.step / progress.total) * 100}%` : '10%' }} />
+                <div className={`h-full rounded-full transition-all duration-700 ${phase === 'paused' ? 'bg-[#ff9800]' : 'bg-[#21a038]'}`} style={{ width: progress.total > 0 ? `${(progress.step / progress.total) * 100}%` : '10%' }} />
               )}
             </div>
+          </div>
+        )}
+
+        {/* Current step inspector (debug mode) */}
+        {currentStep && (phase === 'paused' || phase === 'running') && (
+          <div className="border-2 border-[#ff9800]/40 rounded-xl bg-[#ff9800]/5 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase">
+                  Шаг {currentStep.stepIndex}/{currentStep.totalSteps} · {currentStep.nodeType}
+                </div>
+                <div className="text-sm font-semibold text-foreground">{currentStep.nodeLabel}</div>
+              </div>
+              {phase === 'paused' && <span className="text-[10px] bg-[#ff9800] text-white rounded px-1.5 py-0.5 font-medium">PAUSED</span>}
+            </div>
+
+            {/* Input */}
+            {currentStep.inputData && (currentStep.inputData.documents_text || currentStep.inputData.previous_output) && (
+              <details className="text-[11px]" open={phase === 'paused'}>
+                <summary className="cursor-pointer font-medium text-[#1976d2]">📥 Входные данные</summary>
+                <div className="mt-1 space-y-1">
+                  {currentStep.inputData.previous_output && (
+                    <div>
+                      <div className="text-[10px] text-muted-foreground mb-0.5">Результат предыдущего шага:</div>
+                      <pre className="bg-background border border-border rounded p-1.5 max-h-32 overflow-auto whitespace-pre-wrap text-[10px]">
+                        {currentStep.inputData.previous_output.slice(0, 800)}
+                        {currentStep.inputData.previous_output.length > 800 ? '\n... (обрезано)' : ''}
+                      </pre>
+                    </div>
+                  )}
+                  {currentStep.inputData.documents_text && (
+                    <div>
+                      <div className="text-[10px] text-muted-foreground mb-0.5">Документы (полный текст):</div>
+                      <pre className="bg-background border border-border rounded p-1.5 max-h-24 overflow-auto whitespace-pre-wrap text-[10px]">
+                        {currentStep.inputData.documents_text.slice(0, 400)}
+                        {currentStep.inputData.documents_text.length > 400 ? '\n... (' + currentStep.inputData.documents_text.length + ' симв)' : ''}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+
+            {/* Prompt */}
+            {currentStep.promptUsed && (
+              <details className="text-[11px]" open={phase === 'paused'}>
+                <summary className="cursor-pointer font-medium text-[#7b1fa2]">📝 Промпт в GigaChat</summary>
+                <pre className="mt-1 bg-background border border-border rounded p-1.5 max-h-32 overflow-auto whitespace-pre-wrap text-[10px]">
+                  {currentStep.promptUsed.slice(0, 1000)}
+                  {currentStep.promptUsed.length > 1000 ? '\n... (обрезано)' : ''}
+                </pre>
+              </details>
+            )}
+
+            {/* Output */}
+            {currentStep.outputData?.result && (
+              <details className="text-[11px]" open={phase === 'paused'}>
+                <summary className="cursor-pointer font-medium text-[#21a038]">📤 Результат</summary>
+                <pre className="mt-1 bg-background border border-border rounded p-1.5 max-h-40 overflow-auto whitespace-pre-wrap text-[10px]">
+                  {currentStep.outputData.result.slice(0, 1500)}
+                  {currentStep.outputData.result.length > 1500 ? '\n... (обрезано)' : ''}
+                </pre>
+              </details>
+            )}
+
+            {/* Pause controls */}
+            {phase === 'paused' && (
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" className="flex-1 rounded-xl bg-[#ff9800] hover:bg-[#f57c00] text-xs" onClick={handleContinue}>
+                  Далее →
+                </Button>
+                <Button size="sm" variant="outline" className="rounded-xl text-xs" onClick={handleSkipStepMode}>
+                  ⏩ До конца
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -278,7 +408,49 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
               + Добавить файлы
             </Button>
             <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt" multiple onChange={handleFileChange} className="hidden" />
+
+            {/* Debug mode toggle */}
+            <label className="flex items-center gap-2 mt-3 px-1 cursor-pointer text-xs select-none">
+              <input
+                type="checkbox"
+                checked={stepMode}
+                onChange={(e) => setStepMode(e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-[#ff9800]"
+              />
+              <span className="text-foreground">🐛 Пошаговый режим (отладка)</span>
+            </label>
+            {stepMode && (
+              <p className="text-[10px] text-muted-foreground mt-1 px-1">
+                Сценарий будет приостанавливаться после каждой ноды для проверки данных
+              </p>
+            )}
           </div>
+        )}
+
+        {/* Step history (after run, in step mode) */}
+        {stepHistory.length > 0 && (phase === 'done' || phase === 'error') && (
+          <details className="text-xs">
+            <summary className="cursor-pointer font-medium text-muted-foreground">
+              История шагов ({stepHistory.length})
+            </summary>
+            <div className="mt-2 space-y-1.5">
+              {stepHistory.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => setCurrentStep(s)}
+                  className={`w-full text-left text-[10px] rounded-lg px-2 py-1.5 border transition-colors ${
+                    currentStep?.stepId === s.stepId
+                      ? 'bg-[#ff9800]/10 border-[#ff9800]'
+                      : 'bg-background border-border hover:bg-accent'
+                  }`}
+                >
+                  <span className="font-mono text-muted-foreground">{s.stepIndex}/{s.totalSteps}</span>
+                  {' '}
+                  {s.nodeLabel}
+                </button>
+              ))}
+            </div>
+          </details>
         )}
       </div>
 
@@ -287,7 +459,7 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
         {phase === 'idle' && (
           <Button className="w-full rounded-xl bg-[#00897b] hover:bg-[#00796b] text-xs" onClick={handleRun} disabled={files.length === 0}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="mr-1.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            Запустить ({files.length} файл.)
+            Запустить{stepMode ? ' (отладка)' : ''} ({files.length} файл.)
           </Button>
         )}
         {runId && (phase === 'done' || phase === 'error') && (
@@ -295,7 +467,7 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
             <Button size="sm" variant="outline" className="w-full rounded-xl text-xs" onClick={() => navigate(`/scenarios/${scenarioId}/runs/${runId}`)}>
               Подробный отчёт
             </Button>
-            <Button size="sm" variant="outline" className="w-full rounded-xl text-xs" onClick={() => { setPhase('idle'); setLog([]); setResult(null); setProgress({ step: 0, total: 0 }); }}>
+            <Button size="sm" variant="outline" className="w-full rounded-xl text-xs" onClick={() => { setPhase('idle'); setLog([]); setResult(null); setProgress({ step: 0, total: 0 }); setCurrentStep(null); setStepHistory([]); }}>
               Запустить снова
             </Button>
           </>

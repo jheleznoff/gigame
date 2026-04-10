@@ -17,6 +17,46 @@ _executor = ThreadPoolExecutor(max_workers=2)
 
 logger = logging.getLogger(__name__)
 
+# Step-by-step debug mode state (in-memory, per run_id)
+_pause_events: dict[str, asyncio.Event] = {}
+_step_mode_runs: set[str] = set()
+
+
+def enable_step_mode(run_id: str) -> None:
+    """Enable step-by-step pause mode for a run."""
+    _step_mode_runs.add(run_id)
+    _pause_events[run_id] = asyncio.Event()
+
+
+def disable_step_mode(run_id: str) -> None:
+    """Disable step mode (continue without further pauses)."""
+    _step_mode_runs.discard(run_id)
+    ev = _pause_events.get(run_id)
+    if ev:
+        ev.set()  # release any waiter
+
+
+def continue_step(run_id: str) -> bool:
+    """Signal the engine to proceed past the current pause point."""
+    ev = _pause_events.get(run_id)
+    if ev is None:
+        return False
+    ev.set()
+    return True
+
+
+def cleanup_run(run_id: str) -> None:
+    """Cleanup run state after completion."""
+    _pause_events.pop(run_id, None)
+    _step_mode_runs.discard(run_id)
+
+
+async def _pause_if_step_mode(run_id: str, step_data: dict) -> dict | None:
+    """If run is in step mode, pause and return a step_paused event."""
+    if run_id not in _step_mode_runs:
+        return None
+    return {"type": "step_paused", **step_data}
+
 
 async def _async_chat_completion(messages: list[dict[str, str]]) -> str:
     """Run blocking GigaChat call in a thread pool to avoid blocking the event loop."""
@@ -213,6 +253,7 @@ async def execute_scenario(
             "previous_output": previous_output,
         }
 
+        prompt = None  # initialized for safety; set in branches that build a prompt
         try:
             # Handle different node types
             if node_type == "loop":
@@ -532,11 +573,46 @@ async def execute_scenario(
             step.status = "completed"
             step.input_data = input_data
             step.output_data = {"result": output}
-            step.prompt_used = prompt if node_type != "loop" else "(loop)"
+            if node_type == "loop":
+                step.prompt_used = "(loop — see iterations)"
+            elif node_type == "loop_subgraph":
+                step.prompt_used = "(loop_subgraph — multiple prompts per iteration)"
+            elif node_type in ("switch", "if_node"):
+                step.prompt_used = None
+            else:
+                step.prompt_used = prompt if isinstance(prompt, str) else None
             step.completed_at = datetime.utcnow()
             node_outputs[node_id] = output
 
             yield {"type": "node_status", "node_id": node_id, "node_label": node_label, "node_type": node_type, "status": "completed", "step": node_index, "total": total_nodes}
+
+            # Emit full step data for live debugging
+            yield {
+                "type": "step_complete",
+                "step_id": step.id,
+                "node_id": node_id,
+                "node_label": node_label,
+                "node_type": node_type,
+                "input_data": input_data,
+                "output_data": {"result": output},
+                "prompt_used": step.prompt_used,
+                "step_index": node_index,
+                "total_steps": total_nodes,
+            }
+
+            # Pause if step mode is enabled
+            if run.id in _step_mode_runs:
+                yield {
+                    "type": "step_paused",
+                    "node_id": node_id,
+                    "node_label": node_label,
+                    "step_index": node_index,
+                    "total_steps": total_nodes,
+                }
+                pause_ev = _pause_events.get(run.id)
+                if pause_ev:
+                    pause_ev.clear()
+                    await pause_ev.wait()
 
         except Exception as e:
             logger.exception("Node %s failed", node_id)
@@ -550,6 +626,7 @@ async def execute_scenario(
             run.status = "failed"
             await db.commit()
             yield {"type": "status", "run_id": run.id, "status": "failed"}
+            cleanup_run(run.id)
             return
 
         await db.commit()
@@ -572,3 +649,4 @@ async def execute_scenario(
     await db.commit()
 
     yield {"type": "status", "run_id": run.id, "status": "completed", "result": final_result}
+    cleanup_run(run.id)

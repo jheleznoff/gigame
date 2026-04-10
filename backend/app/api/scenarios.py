@@ -18,7 +18,12 @@ from app.schemas.scenario import (
     ScenarioUpdate,
 )
 from app.services import document_service, scenario_service
-from app.services.scenario_engine import execute_scenario
+from app.services.scenario_engine import (
+    execute_scenario,
+    enable_step_mode,
+    disable_step_mode,
+    continue_step,
+)
 
 router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
 
@@ -139,13 +144,31 @@ async def list_scenario_runs(scenario_id: str, db: AsyncSession = Depends(get_db
     return await scenario_service.get_scenario_runs(db, scenario_id)
 
 
+@router.post("/runs/{run_id}/continue", status_code=204)
+async def continue_scenario_step(run_id: str):
+    """Resume a scenario run paused in step-by-step mode."""
+    if not continue_step(run_id):
+        raise HTTPException(status_code=404, detail="No paused run found")
+
+
+@router.post("/runs/{run_id}/disable-step-mode", status_code=204)
+async def disable_scenario_step_mode(run_id: str):
+    """Continue without further pauses (skip remaining step pauses)."""
+    disable_step_mode(run_id)
+
+
 @router.post("/{scenario_id}/run")
 async def run_scenario(
     scenario_id: str,
+    step_mode: bool = False,
     files: list[UploadFile] = [],
     db: AsyncSession = Depends(get_db),
 ):
-    """Run a scenario with uploaded documents. Streams progress via SSE."""
+    """Run a scenario with uploaded documents. Streams progress via SSE.
+
+    If step_mode=true, the engine pauses after each node and waits for
+    POST /scenarios/runs/{run_id}/continue before proceeding.
+    """
     scenario = await scenario_service.get_scenario(db, scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
@@ -201,6 +224,17 @@ async def run_scenario(
             db.add(run)
             await db.commit()
             await db.refresh(run)
+
+            # Enable step-by-step mode if requested
+            if step_mode:
+                enable_step_mode(run.id)
+
+            # Send run_id early so frontend can issue continue requests
+            yield {"data": json.dumps({
+                "type": "run_started",
+                "run_id": run.id,
+                "step_mode": step_mode,
+            }, ensure_ascii=False)}
 
             async for event in execute_scenario(
                 db, run, scenario.graph_data, documents_text

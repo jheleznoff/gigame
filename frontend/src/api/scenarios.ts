@@ -103,15 +103,25 @@ export function getScenarioRun(runId: string): Promise<ScenarioRunDetail> {
   return fetchApi(`/scenarios/runs/${runId}`);
 }
 
+export function continueScenarioStep(runId: string): Promise<void> {
+  return fetchApi(`/scenarios/runs/${runId}/continue`, { method: 'POST' });
+}
+
+export function disableScenarioStepMode(runId: string): Promise<void> {
+  return fetchApi(`/scenarios/runs/${runId}/disable-step-mode`, { method: 'POST' });
+}
+
 export async function* runScenario(
   scenarioId: string,
   files: File[],
+  stepMode: boolean = false,
 ): AsyncGenerator<Record<string, unknown>> {
   const formData = new FormData();
   for (const file of files) {
     formData.append('files', file);
   }
-  const res = await fetch(`/api/scenarios/${scenarioId}/run`, {
+  const url = `/api/scenarios/${scenarioId}/run${stepMode ? '?step_mode=true' : ''}`;
+  const res = await fetch(url, {
     method: 'POST',
     body: formData,
   });
