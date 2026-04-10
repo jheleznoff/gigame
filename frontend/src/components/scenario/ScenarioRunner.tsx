@@ -183,12 +183,6 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
           if (pausedNodeId) setExecStatus(pausedNodeId, 'paused');
         }
 
-        if (event.type === 'condition_result') {
-          const branch = event.chosen_branch as string;
-          const condLabel = (event.node_label as string) || '';
-          addLog(`🔀 ${condLabel}: ветка "${branch}"`, 'iter');
-        }
-
         if (event.type === 'switch_result') {
           const rule = event.matched_rule as string;
           const lbl = (event.node_label as string) || 'Switch';
@@ -204,18 +198,11 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
 
         if (event.type === 'loop_progress') {
           const detail = event.detail as string || '';
-          if (detail.startsWith('branch:')) {
-            addLog(`  🔀 Док ${event.iteration}: ветка «${detail.slice(7)}»`, 'iter');
-          } else if (detail === 'classify') {
-            addLog(`  📄 Документ ${event.iteration}/${event.total}: классификация`, 'info');
+          if (detail.startsWith('classified as')) {
+            addLog(`  📄 Документ ${event.iteration}/${event.total}: ${detail}`, 'info');
           } else {
             addLog(`  🔄 Итерация ${event.iteration}/${event.total}`, 'iter');
           }
-        }
-
-        if (event.type === 'loop_branch') {
-          const branch = event.branch as string || '—';
-          addLog(`  🏷️ Док ${event.iteration} → «${branch}»`, 'iter');
         }
       }
     } catch (err) {

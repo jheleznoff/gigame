@@ -8,12 +8,8 @@ import { Button } from '@/components/ui/button';
 const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
   input: { label: 'Вход', color: 'bg-[#21a038]' },
   output: { label: 'Выход', color: 'bg-[#21a038]' },
-  classification: { label: 'Классификация', color: 'bg-[#f57c00]' },
-  extraction: { label: 'Извлечение', color: 'bg-[#1976d2]' },
   processing: { label: 'Обработка', color: 'bg-[#7b1fa2]' },
   loop: { label: 'Цикл', color: 'bg-[#00897b]' },
-  condition: { label: 'Условие', color: 'bg-[#e53935]' },
-  loop_subgraph: { label: 'Цикл + ветки', color: 'bg-[#6a1b9a]' },
   switch: { label: 'Switch', color: 'bg-[#ff6f00]' },
   if_node: { label: 'If', color: 'bg-[#0277bd]' },
 };
@@ -99,36 +95,6 @@ export function NodeConfigPanel() {
             )}
           </div>
 
-          {node.type === 'classification' && (
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                Категории
-              </label>
-              <Input
-                value={data.categories || ''}
-                onChange={(e) => updateNodeData(node.id, { categories: e.target.value })}
-                placeholder="ТЗ, КП, Договор"
-                className="rounded-xl"
-              />
-              <p className="text-[10px] text-muted-foreground mt-1">Через запятую</p>
-            </div>
-          )}
-
-          {node.type === 'extraction' && (
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                Поля для извлечения
-              </label>
-              <Input
-                value={data.fields || ''}
-                onChange={(e) => updateNodeData(node.id, { fields: e.target.value })}
-                placeholder="название, цена, срок"
-                className="rounded-xl"
-              />
-              <p className="text-[10px] text-muted-foreground mt-1">Через запятую</p>
-            </div>
-          )}
-
           {node.type === 'loop' && (
             <>
               <div className="border border-border rounded-xl p-3 bg-accent/30">
@@ -163,62 +129,6 @@ export function NodeConfigPanel() {
                   </p>
                 </div>
               )}
-            </>
-          )}
-
-          {node.type === 'condition' && (
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                Ветки (варианты)
-              </label>
-              <Input
-                value={data.branches || ''}
-                onChange={(e) => updateNodeData(node.id, { branches: e.target.value })}
-                placeholder="ТЗ, КП, Прочее"
-                className="rounded-xl"
-              />
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Через запятую. Используйте эти же названия как метки рёбер.
-                <br />Ветка "Прочее" / "else" — fallback.
-              </p>
-            </div>
-          )}
-
-          {node.type === 'loop_subgraph' && (
-            <>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                  Ветки (типы документов)
-                </label>
-                <Input
-                  value={data.branches || ''}
-                  onChange={(e) => updateNodeData(node.id, { branches: e.target.value })}
-                  placeholder="ПЗ, КП, ПРИКАЗ"
-                  className="rounded-xl"
-                />
-                <p className="text-[10px] text-muted-foreground mt-1">Через запятую</p>
-              </div>
-              {data.branches && data.branches.split(',').map((branch: string) => {
-                const b = branch.trim();
-                if (!b) return null;
-                const prompts = (() => { try { return JSON.parse(data.branch_prompts || '{}'); } catch { return {}; } })();
-                return (
-                  <div key={b}>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                      Промпт ветки «{b}»
-                    </label>
-                    <Textarea
-                      value={prompts[b] || ''}
-                      onChange={(e) => {
-                        const updated = { ...prompts, [b]: e.target.value };
-                        updateNodeData(node.id, { branch_prompts: JSON.stringify(updated) });
-                      }}
-                      placeholder={`Инструкция для документов типа ${b}...`}
-                      className="min-h-[80px] rounded-xl text-xs"
-                    />
-                  </div>
-                );
-              })}
             </>
           )}
 

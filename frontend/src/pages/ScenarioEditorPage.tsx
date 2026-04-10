@@ -43,11 +43,11 @@ export function ScenarioEditorPage() {
     execStatuses,
   } = useScenarioStore();
 
-  // When connecting from a condition node, prompt for edge label
+  // When connecting from a branching node (Switch/If), prompt for edge label
   const handleConnect = useCallback(
     (connection: Connection) => {
       const sourceNode = nodes.find((n) => n.id === connection.source);
-      const branchingTypes = ['condition', 'switch', 'if_node'];
+      const branchingTypes = ['switch', 'if_node'];
       if (sourceNode && branchingTypes.includes(sourceNode.type || '')) {
         const hint = sourceNode.type === 'if_node' ? 'true / false:' : 'Название ветки (например: ТЗ, КП, Прочее):';
         const label = prompt(hint);

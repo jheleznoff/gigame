@@ -13,14 +13,12 @@ const TEMPLATES = [
     graph_data: {
       nodes: [
         { id: 'node_0', type: 'input', position: { x: 250, y: 50 }, data: { label: 'Документ' } },
-        { id: 'node_1', type: 'classification', position: { x: 250, y: 180 }, data: { label: 'Классификация', prompt: 'Определи тип документа.', categories: 'Договор, КП, ТЗ, Счёт, Акт, Другое' } },
-        { id: 'node_2', type: 'extraction', position: { x: 250, y: 310 }, data: { label: 'Извлечение', prompt: 'Извлеки ключевые данные из документа.', fields: 'дата, стороны, сумма, предмет' } },
-        { id: 'node_3', type: 'output', position: { x: 250, y: 440 }, data: { label: 'Результат' } },
+        { id: 'node_1', type: 'processing', position: { x: 250, y: 180 }, data: { label: 'Анализ документа', prompt: 'Определи тип документа (Договор, КП, ТЗ, Счёт, Акт, Другое) и извлеки ключевые данные: дата, стороны, сумма, предмет. Верни структурированный ответ.' } },
+        { id: 'node_2', type: 'output', position: { x: 250, y: 310 }, data: { label: 'Результат' } },
       ],
       edges: [
         { id: 'e0', source: 'node_0', target: 'node_1' },
         { id: 'e1', source: 'node_1', target: 'node_2' },
-        { id: 'e2', source: 'node_2', target: 'node_3' },
       ],
     },
   },

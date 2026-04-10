@@ -186,37 +186,11 @@ def _build_prompt(node: dict, input_data: dict) -> str:
 
     context = "\n\n".join(context_parts)
 
-    if node_type == "classification":
-        categories = config.get("categories", "")
-        return (
-            f"{prompt_template}\n\n"
-            f"Категории: {categories}\n\n"
-            f"{context}\n\n"
-            "Определи категорию и верни только название категории."
-        )
-    elif node_type == "extraction":
-        fields = config.get("fields", "")
-        return (
-            f"{prompt_template}\n\n"
-            f"Извлеки следующие поля: {fields}\n\n"
-            f"{context}\n\n"
-            "Верни результат в формате JSON."
-        )
-    elif node_type == "condition":
-        branches = config.get("branches", "")
-        return (
-            f"{prompt_template}\n\n"
-            f"Возможные варианты: {branches}\n\n"
-            f"{context}\n\n"
-            f"Проанализируй и верни ТОЛЬКО одно слово — название подходящего варианта из списка: {branches}. "
-            "Ничего больше не пиши, только название варианта."
-        )
-    elif node_type == "processing":
-        return f"{prompt_template}\n\n{context}"
-    elif node_type in ("loop", "loop_subgraph"):
-        return f"{prompt_template}\n\n{context}"
-    else:
-        return f"{prompt_template}\n\n{context}" if context else prompt_template
+    # All LLM-invoking nodes (processing, loop) share the same simple template.
+    # Unknown/legacy types (e.g. old classification/extraction/condition from
+    # saved scenarios) fall back to this generic behavior — effectively
+    # treating them as plain processing nodes.
+    return f"{prompt_template}\n\n{context}" if context else prompt_template
 
 
 async def execute_scenario(
@@ -385,160 +359,6 @@ async def execute_scenario(
                     if i < len(docs) - 1:
                         await asyncio.sleep(1)
                 output = "\n\n".join(loop_results)
-
-            elif node_type == "loop_subgraph":
-                # Per-item branching: classify each doc, then run branch-specific prompt
-                config = node.get("data", {})
-                branches_str = config.get("branches", "")
-                branch_names = [b.strip() for b in branches_str.split(",") if b.strip()]
-
-                # Parse branch_prompts from config (JSON string → dict)
-                branch_prompts_raw = config.get("branch_prompts", "{}")
-                try:
-                    if isinstance(branch_prompts_raw, str):
-                        import json as _json
-                        branch_prompts = _json.loads(branch_prompts_raw)
-                    else:
-                        branch_prompts = branch_prompts_raw
-                except Exception:
-                    branch_prompts = {}
-
-                docs = documents_text.split("---") if documents_text else [documents_text]
-                docs = [d.strip() for d in docs if d.strip()]
-
-                # Accumulate results by branch
-                branch_results: dict[str, list[str]] = {b: [] for b in branch_names}
-                all_results: list[str] = []
-
-                for i, doc_part in enumerate(docs):
-                    # Step 1: classify + extract with the main prompt
-                    loop_input = {"documents_text": doc_part, "previous_output": ""}
-                    prompt = _build_prompt(node, loop_input)
-                    classify_result = await _async_chat_completion([
-                        {"role": "user", "content": prompt}
-                    ])
-
-                    yield {
-                        "type": "loop_progress", "node_id": node_id,
-                        "iteration": i + 1, "total": len(docs),
-                        "detail": "classify",
-                    }
-
-                    # Step 2: determine which branch
-                    matched_branch = None
-                    classify_lower = classify_result.lower()
-                    for bname in branch_names:
-                        if bname.lower() in classify_lower:
-                            matched_branch = bname
-                            break
-
-                    if not matched_branch:
-                        # Check for default/else branch
-                        for bname in branch_names:
-                            if bname.lower() in ("прочее", "else", "другое", "*"):
-                                matched_branch = bname
-                                break
-
-                    yield {
-                        "type": "loop_branch", "node_id": node_id,
-                        "iteration": i + 1, "branch": matched_branch or "—",
-                        "detail": f"doc {i+1} → {matched_branch or 'no match'}",
-                    }
-
-                    # Step 3: run branch-specific prompt if it exists
-                    branch_prompt_template = branch_prompts.get(matched_branch or "", "")
-                    if branch_prompt_template and matched_branch:
-                        branch_context = (
-                            f"Документ:\n{doc_part}\n\n"
-                            f"Результат классификации:\n{classify_result}"
-                        )
-                        full_branch_prompt = f"{branch_prompt_template}\n\n{branch_context}"
-                        branch_result = await _async_chat_completion([
-                            {"role": "user", "content": full_branch_prompt}
-                        ])
-                        branch_results[matched_branch].append(
-                            f"Документ {i + 1}:\n{branch_result}"
-                        )
-                        all_results.append(
-                            f"[{matched_branch}] Документ {i + 1}:\n{branch_result}"
-                        )
-                        yield {
-                            "type": "loop_progress", "node_id": node_id,
-                            "iteration": i + 1, "total": len(docs),
-                            "detail": f"branch:{matched_branch}",
-                        }
-                    else:
-                        # No branch prompt — just store classification result
-                        if matched_branch:
-                            branch_results[matched_branch].append(
-                                f"Документ {i + 1}:\n{classify_result}"
-                            )
-                        all_results.append(
-                            f"[{matched_branch or 'НЕИЗВЕСТНЫЙ'}] Документ {i + 1}:\n{classify_result}"
-                        )
-
-                    if i < len(docs) - 1:
-                        await asyncio.sleep(1)
-
-                # Build structured output
-                output_parts = []
-                for bname in branch_names:
-                    items = branch_results.get(bname, [])
-                    if items:
-                        output_parts.append(f"=== {bname} ({len(items)} документов) ===\n" + "\n\n".join(items))
-                output = "\n\n".join(output_parts) if output_parts else "\n\n".join(all_results)
-
-            elif node_type == "condition":
-                # Condition node: ask GigaChat to pick a branch
-                prompt = _build_prompt(node, input_data)
-                raw_answer = await _async_chat_completion([
-                    {"role": "user", "content": prompt}
-                ])
-                chosen_branch = raw_answer.strip().strip('"').strip("'").strip('.')
-
-                # Find which outgoing edges match the chosen branch
-                outgoing = successors.get(node_id, [])
-                chosen_targets: set[str] = set()
-                unchosen_targets: set[str] = set()
-
-                for target_id in outgoing:
-                    edge_data = edge_map.get((node_id, target_id), {})
-                    edge_label = (edge_data.get("label", "") or "").strip()
-
-                    if edge_label and chosen_branch.lower().find(edge_label.lower()) != -1:
-                        chosen_targets.add(target_id)
-                    elif edge_label.lower() in ("else", "прочее", "другое", "иначе", "*"):
-                        # Wildcard/else branch — chosen only if nothing else matches
-                        pass
-                    elif edge_label:
-                        unchosen_targets.add(target_id)
-
-                # If no specific match, look for else/wildcard branch
-                if not chosen_targets:
-                    for target_id in outgoing:
-                        edge_data = edge_map.get((node_id, target_id), {})
-                        edge_label = (edge_data.get("label", "") or "").strip().lower()
-                        if edge_label in ("else", "прочее", "другое", "иначе", "*"):
-                            chosen_targets.add(target_id)
-                        elif not edge_data.get("label"):
-                            # Unlabeled edge = default
-                            chosen_targets.add(target_id)
-
-                # Mark only nodes that are reachable ONLY from unchosen branches.
-                # Merge-nodes (reachable from both chosen and unchosen) are NOT skipped.
-                skipped_nodes |= _get_skip_set(
-                    unchosen_targets - chosen_targets,
-                    chosen_targets,
-                    dict(successors),
-                )
-
-                output = f"Выбрана ветка: {chosen_branch}"
-
-                yield {
-                    "type": "condition_result", "node_id": node_id,
-                    "chosen_branch": chosen_branch,
-                    "node_label": node_label,
-                }
 
             elif node_type == "switch":
                 # Switch node: route based on rules WITHOUT calling GigaChat
@@ -738,8 +558,6 @@ async def execute_scenario(
             step.output_data = {"result": output}
             if node_type == "loop":
                 step.prompt_used = "(loop — see iterations)"
-            elif node_type == "loop_subgraph":
-                step.prompt_used = "(loop_subgraph — multiple prompts per iteration)"
             elif node_type in ("switch", "if_node"):
                 step.prompt_used = None
             else:
