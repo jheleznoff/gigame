@@ -163,11 +163,21 @@ def _get_skip_set(
     return skip
 
 
-def _build_prompt(node: dict, input_data: dict, kb_chunks: list[str] | None = None) -> str:
+def _build_prompt(
+    node: dict,
+    input_data: dict,
+    kb_chunks: list[str] | None = None,
+    rag_configured: bool = False,
+) -> str:
     """Build a prompt for a node based on its type and config.
 
     If kb_chunks is provided (from RAG search), they are injected as
     additional context from the knowledge base.
+
+    rag_configured marks whether the node has a knowledge_base_id set.
+    This distinguishes "KB not wired" from "KB wired but returned 0 chunks",
+    allowing us to add an explicit anti-hallucination warning when the
+    model is expected to use a knowledge base but nothing was found.
     """
     config = node.get("data", {})
     prompt_template = config.get("prompt", "")
@@ -186,11 +196,23 @@ def _build_prompt(node: dict, input_data: dict, kb_chunks: list[str] | None = No
         if len(prev) > MAX_CONTEXT:
             prev = prev[:MAX_CONTEXT] + "\n\n[... обрезано ...]"
         context_parts.append(f"Результат предыдущего шага:\n{prev}")
+
     if kb_chunks:
         joined = "\n\n---\n\n".join(kb_chunks)
         context_parts.append(
             "Релевантные фрагменты из базы знаний (используй их для ответа):\n"
             f"{joined}"
+        )
+    elif rag_configured:
+        # KB was configured on the node but the search returned nothing.
+        # Tell the model explicitly — this prevents hallucination of
+        # "historical analogs" or similar fabricated reference data.
+        context_parts.append(
+            "⚠️ БАЗА ЗНАНИЙ ПОДКЛЮЧЕНА, НО РЕЛЕВАНТНЫХ ФРАГМЕНТОВ НЕ НАЙДЕНО.\n"
+            "В твоём ответе явно укажи: «В базе знаний не найдено релевантных "
+            "данных для этого запроса». НЕ ВЫДУМЫВАЙ никакие исторические аналоги, "
+            "средние значения, референсные данные или примеры — если их нет во "
+            "входных данных, их НЕТ."
         )
 
     context = "\n\n".join(context_parts)
@@ -594,16 +616,25 @@ async def execute_scenario(
                 kb_id = (node.get("data", {}).get("knowledge_base_id") or "").strip()
                 if kb_id:
                     loop = asyncio.get_event_loop()
-                    kb_chunks = await loop.run_in_executor(
-                        _executor, partial(_rag_search_for_node, node, input_data)
-                    )
+                    try:
+                        kb_chunks = await loop.run_in_executor(
+                            _executor, partial(_rag_search_for_node, node, input_data)
+                        )
+                    except Exception:
+                        logger.exception("RAG failed for node %s", node_id)
+                        kb_chunks = []
                     yield {
                         "type": "rag_search", "node_id": node_id,
                         "node_label": node_label,
                         "kb_id": kb_id,
                         "chunks_found": len(kb_chunks),
                     }
-                prompt = _build_prompt(node, input_data, kb_chunks=kb_chunks)
+                prompt = _build_prompt(
+                    node,
+                    input_data,
+                    kb_chunks=kb_chunks,
+                    rag_configured=bool(kb_id),
+                )
                 output = await _async_chat_completion([
                     {"role": "user", "content": prompt}
                 ])
