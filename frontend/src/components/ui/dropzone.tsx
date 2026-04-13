@@ -9,7 +9,7 @@ interface DropZoneProps {
   className?: string;
 }
 
-export function DropZone({ onFiles, accept = '.pdf,.docx,.txt', multiple = true, disabled, children, className = '' }: DropZoneProps) {
+export function DropZone({ onFiles, accept = '.pdf,.docx,.xlsx,.xls,.txt', multiple = true, disabled, children, className = '' }: DropZoneProps) {
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
 

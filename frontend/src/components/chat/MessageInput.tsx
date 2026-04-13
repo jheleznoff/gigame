@@ -6,7 +6,7 @@ interface MessageInputProps {
   disabled?: boolean;
 }
 
-const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.txt'];
+const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.xls', '.txt'];
 
 export function MessageInput({ onSend, disabled }: MessageInputProps) {
   const [content, setContent] = useState('');
@@ -88,7 +88,7 @@ export function MessageInput({ onSend, disabled }: MessageInputProps) {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.docx,.txt"
+          accept=".pdf,.docx,.xlsx,.xls,.txt"
           multiple
           onChange={handleFileChange}
           className="hidden"

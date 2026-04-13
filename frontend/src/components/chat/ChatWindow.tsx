@@ -14,6 +14,7 @@ interface ChatWindowProps {
 export function ChatWindow({ conversationId }: ChatWindowProps) {
   const queryClient = useQueryClient();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortedRef = useRef(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [lastUsage, setLastUsage] = useState<{ total_tokens: number } | null>(null);
@@ -33,6 +34,13 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
 
   useEffect(() => {
     setLastUsage(null);
+  }, [conversationId]);
+
+  useEffect(() => {
+    abortedRef.current = false;
+    return () => {
+      abortedRef.current = true;
+    };
   }, [conversationId]);
 
   const handleSend = useCallback(
@@ -81,9 +89,11 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
           streamBody = { content };
         }
 
+        abortedRef.current = false;
         const stream = streamApi(streamPath, streamBody);
         let full = '';
         for await (const event of stream) {
+          if (abortedRef.current) break;
           if (event.content) {
             if (!full) setStreamingContent('');
             full += event.content;

@@ -17,12 +17,25 @@ const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
 };
 
 export function NodeConfigPanel() {
-  const { nodes, selectedNodeId, updateNodeData, deleteNode, selectNode } =
+  const { nodes, edges, selectedNodeId, updateNodeData, deleteNode, selectNode } =
     useScenarioStore();
   const [showPreview, setShowPreview] = useState(false);
 
   const node = nodes.find((n) => n.id === selectedNodeId);
   const isProcessing = node?.type === 'processing';
+
+  // For Switch: find classes from predecessor Loop (classify_strict)
+  const predecessorClasses = (() => {
+    if (!node || node.type !== 'switch') return null;
+    const inEdge = edges.find((e) => e.target === node.id);
+    if (!inEdge) return null;
+    const predNode = nodes.find((n) => n.id === inEdge.source);
+    if (!predNode || predNode.type !== 'loop') return null;
+    const predData = predNode.data as Record<string, string>;
+    if (predData.classify_strict !== 'true') return null;
+    const classes = predData.classes || '';
+    return classes.split(',').map((c: string) => c.trim()).filter(Boolean);
+  })();
 
   // KB list for the RAG selector (only used by processing nodes).
   // Must be called before any early return — React hooks rules.
@@ -78,9 +91,9 @@ export function NodeConfigPanel() {
         />
       </div>
 
-      {!isIO && (
+      {!isIO && node.type !== 'switch' && node.type !== 'if_node' && (
         <>
-          {/* Prompt */}
+          {/* Prompt — only for processing, loop */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-medium text-muted-foreground">Промпт</label>
@@ -148,9 +161,9 @@ export function NodeConfigPanel() {
                   <span className="font-medium text-foreground">🏷️ Строгая классификация</span>
                 </label>
                 <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
-                  GigaChat вернёт ТОЛЬКО название класса (одно слово). Промпт ноды игнорируется.
-                  Оригинальный текст каждого документа сохранится для следующего узла Switch
-                  — он сможет отфильтровать документы по классу и передать только нужные в каждую ветку.
+                  GigaChat вернёт ТОЛЬКО название класса (одно слово). Промпт ноды используется как
+                  подсказка для классификации. Оригинальный текст каждого документа сохранится для следующего
+                  узла Switch — он отфильтрует документы по классу и передаст только нужные в каждую ветку.
                 </p>
               </div>
               {(data.classify_strict === 'true' || data.classify_strict === true) && (
@@ -172,63 +185,56 @@ export function NodeConfigPanel() {
             </>
           )}
 
-          {node.type === 'switch' && (
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                Правила маршрутизации (JSON)
-              </label>
-              <Textarea
-                value={data.rules || '[]'}
-                onChange={(e) => updateNodeData(node.id, { rules: e.target.value })}
-                placeholder={'[\n  {"value": "КП", "operator": "contains", "label": "КП"},\n  {"value": "ПЗ", "operator": "contains", "label": "ПЗ"}\n]'}
-                className="min-h-[120px] rounded-xl text-xs font-mono"
-              />
-              <p className="text-[10px] text-muted-foreground mt-1">
-                operator: contains, equals, startswith<br/>
-                label → метка ребра. Без GigaChat.
-              </p>
-            </div>
-          )}
+        </>
+      )}
 
-          {node.type === 'if_node' && (
-            <>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Поле (необяз.)</label>
-                <Input
-                  value={data.field || ''}
-                  onChange={(e) => updateNodeData(node.id, { field: e.target.value })}
-                  placeholder="ТИП, НМЦД, статус..."
-                  className="rounded-xl"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Оператор</label>
-                <select
-                  value={data.operator || 'contains'}
-                  onChange={(e) => updateNodeData(node.id, { operator: e.target.value })}
-                  className="w-full text-xs bg-background border border-border rounded-xl px-2.5 py-2 text-foreground"
-                >
-                  <option value="contains">содержит</option>
-                  <option value="not_contains">не содержит</option>
-                  <option value="equals">равно</option>
-                  <option value="greater_than">больше чем</option>
-                  <option value="less_than">меньше чем</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Значение</label>
-                <Input
-                  value={data.value || ''}
-                  onChange={(e) => updateNodeData(node.id, { value: e.target.value })}
-                  placeholder="КП, 1000000, ошибка..."
-                  className="rounded-xl"
-                />
-              </div>
-              <p className="text-[10px] text-muted-foreground">
-                Рёбра: «true»/«да» и «false»/«нет». Без GigaChat.
-              </p>
-            </>
-          )}
+      {/* Switch — visual rules editor, no prompt */}
+      {node.type === 'switch' && (
+        <SwitchRulesEditor
+          rules={data.rules || '[]'}
+          onChange={(rules) => updateNodeData(node.id, { rules })}
+          suggestedClasses={predecessorClasses}
+        />
+      )}
+
+      {/* If — no prompt, condition editor */}
+      {node.type === 'if_node' && (
+        <>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Поле (необяз.)</label>
+            <Input
+              value={data.field || ''}
+              onChange={(e) => updateNodeData(node.id, { field: e.target.value })}
+              placeholder="ТИП, НМЦД, статус..."
+              className="rounded-xl"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Оператор</label>
+            <select
+              value={data.operator || 'contains'}
+              onChange={(e) => updateNodeData(node.id, { operator: e.target.value })}
+              className="w-full text-xs bg-background border border-border rounded-xl px-2.5 py-2 text-foreground"
+            >
+              <option value="contains">содержит</option>
+              <option value="not_contains">не содержит</option>
+              <option value="equals">равно</option>
+              <option value="greater_than">больше чем</option>
+              <option value="less_than">меньше чем</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Значение</label>
+            <Input
+              value={data.value || ''}
+              onChange={(e) => updateNodeData(node.id, { value: e.target.value })}
+              placeholder="КП, 1000000, ошибка..."
+              className="rounded-xl"
+            />
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Рёбра: «true»/«да» и «false»/«нет». Без GigaChat.
+          </p>
         </>
       )}
 
@@ -245,6 +251,129 @@ export function NodeConfigPanel() {
           Удалить ноду
         </Button>
       )}
+    </div>
+  );
+}
+
+// ── Visual Switch Rules Editor ──────────────────────────────────────────
+
+interface SwitchRule {
+  value: string;
+  operator: string;
+  label: string;
+}
+
+const OPERATORS = [
+  { value: 'contains', label: 'содержит' },
+  { value: 'equals', label: 'равно' },
+  { value: 'startswith', label: 'начинается с' },
+];
+
+function SwitchRulesEditor({ rules, onChange, suggestedClasses }: { rules: string; onChange: (v: string) => void; suggestedClasses?: string[] | null }) {
+  let parsed: SwitchRule[] = [];
+  try {
+    parsed = JSON.parse(rules);
+  } catch {
+    parsed = [];
+  }
+
+  const update = (newRules: SwitchRule[]) => {
+    onChange(JSON.stringify(newRules));
+  };
+
+  const addRule = (cls?: string) => {
+    update([...parsed, { value: cls || '', operator: 'contains', label: cls || '' }]);
+  };
+
+  const removeRule = (i: number) => {
+    update(parsed.filter((_, idx) => idx !== i));
+  };
+
+  const updateRule = (i: number, field: keyof SwitchRule, val: string) => {
+    const copy = [...parsed];
+    copy[i] = { ...copy[i], [field]: val };
+    if (field === 'value' && (!copy[i].label || copy[i].label === parsed[i].value)) {
+      copy[i].label = val;
+    }
+    update(copy);
+  };
+
+  // Auto-populate rules from predecessor Loop classes
+  const usedValues = new Set(parsed.map((r) => r.value));
+  const missingClasses = suggestedClasses?.filter((c) => !usedValues.has(c)) || [];
+
+  return (
+    <div className="space-y-3">
+      <label className="text-xs font-medium text-muted-foreground block">Правила маршрутизации</label>
+      <p className="text-[10px] text-muted-foreground -mt-1">
+        {suggestedClasses
+          ? 'Классы подтянуты из узла классификации. Метка ребра определяет ветку.'
+          : 'Каждое правило проверяет текст предыдущего узла. Метка ребра определяет ветку.'}
+        {' '}Без GigaChat.
+      </p>
+
+      {missingClasses.length > 0 && (
+        <button
+          onClick={() => {
+            const newRules = [...parsed];
+            for (const cls of missingClasses) {
+              newRules.push({ value: cls, operator: 'contains', label: cls });
+            }
+            update(newRules);
+          }}
+          className="w-full text-xs bg-[#ff6f00]/10 text-[#ff6f00] border border-[#ff6f00]/30 rounded-xl px-3 py-2 hover:bg-[#ff6f00]/20 transition-colors"
+        >
+          Добавить классы: {missingClasses.join(', ')}
+        </button>
+      )}
+
+      {parsed.map((rule, i) => (
+        <div key={i} className="flex items-center gap-1.5 bg-accent/30 rounded-xl p-2">
+          <div className="flex-1 space-y-1.5">
+            <div className="flex gap-1.5">
+              <input
+                value={rule.value}
+                onChange={(e) => updateRule(i, 'value', e.target.value)}
+                placeholder="Значение"
+                className="flex-1 text-xs bg-background border border-border rounded-lg px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#ff6f00]"
+              />
+              <select
+                value={rule.operator}
+                onChange={(e) => updateRule(i, 'operator', e.target.value)}
+                className="text-xs bg-background border border-border rounded-lg px-2 py-1.5 outline-none"
+              >
+                {OPERATORS.map((op) => (
+                  <option key={op.value} value={op.value}>{op.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-muted-foreground whitespace-nowrap">→ ветка:</span>
+              <input
+                value={rule.label}
+                onChange={(e) => updateRule(i, 'label', e.target.value)}
+                placeholder="Метка ребра"
+                className="flex-1 text-xs bg-background border border-border rounded-lg px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#ff6f00]"
+              />
+            </div>
+          </div>
+          <button
+            onClick={() => removeRule(i)}
+            className="p-1 rounded hover:bg-background hover:text-destructive shrink-0"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      ))}
+
+      <button
+        onClick={addRule}
+        className="w-full text-xs border border-dashed border-border rounded-xl px-3 py-2 text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+      >
+        + Добавить правило
+      </button>
     </div>
   );
 }

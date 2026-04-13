@@ -32,6 +32,7 @@ function App() {
             <Route path="/scenarios" element={<ScenariosPage />} />
             <Route path="/scenarios/:scenarioId/edit" element={<ScenarioEditorPage />} />
             <Route path="/scenarios/:scenarioId/runs/:runId" element={<ScenarioRunPage />} />
+            <Route path="*" element={<Navigate to="/chat" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>

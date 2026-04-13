@@ -151,12 +151,12 @@ export function ScenarioRunPage() {
                     <summary className="text-xs text-[#21a038] cursor-pointer font-medium">
                       📤 Результат
                     </summary>
-                    <div className="text-xs bg-muted rounded p-2 mt-1 whitespace-pre-wrap max-h-64 overflow-auto">
+                    <div className="text-xs bg-muted rounded p-2 mt-1 max-h-64 overflow-auto">
                       {typeof step.output_data === 'object' && step.output_data !== null && 'result' in step.output_data
-                        ? String((step.output_data as { result: unknown }).result)
+                        ? <Markdown>{String((step.output_data as { result: unknown }).result)}</Markdown>
                         : typeof step.output_data === 'object'
-                          ? JSON.stringify(step.output_data, null, 2)
-                          : String(step.output_data)}
+                          ? <pre className="whitespace-pre-wrap">{JSON.stringify(step.output_data, null, 2)}</pre>
+                          : <Markdown>{String(step.output_data)}</Markdown>}
                     </div>
                   </details>
                 )}

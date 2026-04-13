@@ -2,7 +2,8 @@ import { useState, useMemo } from 'react';
 import { NavLink, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
-import { getConversations, createConversation, deleteConversation } from '@/api/chat';
+import { getConversations, createConversation, updateConversation, deleteConversation } from '@/api/chat';
+import { fetchApi } from '@/api/client';
 import {
   getKnowledgeBases,
   createKnowledgeBase,
@@ -188,6 +189,25 @@ export function Sidebar() {
       }
     } else if (section === 'scenarios') {
       if (confirm('Удалить сценарий?')) deleteScenarioMut.mutate(id);
+    }
+  };
+
+  const handleItemRename = async (id: string, newTitle: string) => {
+    if (section === 'chat') {
+      await updateConversation(id, newTitle);
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    } else if (section === 'knowledge-bases') {
+      await fetchApi(`/knowledge-bases/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name: newTitle }),
+      });
+      queryClient.invalidateQueries({ queryKey: ['knowledge-bases'] });
+    } else if (section === 'scenarios') {
+      await fetchApi(`/scenarios/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name: newTitle }),
+      });
+      queryClient.invalidateQueries({ queryKey: ['scenarios'] });
     }
   };
 
@@ -411,6 +431,7 @@ export function Sidebar() {
           activeId={activeId}
           onClick={handleItemClick}
           onDelete={handleItemDelete}
+          onRename={handleItemRename}
           emptyText={emptyText}
           renderExtraActions={
             section === 'scenarios'
@@ -437,7 +458,7 @@ export function Sidebar() {
       {/* Footer */}
       <div className="px-5 py-3 border-t border-border">
         <div className="text-[10px] text-muted-foreground leading-tight">
-          Powered by GigaChat
+          Разработано Центром снабжения
         </div>
       </div>
     </aside>

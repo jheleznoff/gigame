@@ -139,11 +139,12 @@ export async function* runScenario(
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
     for (const line of lines) {
-      if (line.startsWith('data: ')) {
+      if (line.startsWith('data:')) {
         try {
-          yield JSON.parse(line.slice(6));
-        } catch {
-          // skip
+          const json = line.startsWith('data: ') ? line.slice(6) : line.slice(5);
+          yield JSON.parse(json);
+        } catch (e) {
+          console.warn('Scenario SSE parse error:', line, e);
         }
       }
     }

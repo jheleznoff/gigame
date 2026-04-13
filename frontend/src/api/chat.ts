@@ -43,6 +43,13 @@ export function createConversation(
   });
 }
 
+export function updateConversation(id: string, title: string): Promise<Conversation> {
+  return fetchApi(`/conversations/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ title }),
+  });
+}
+
 export function deleteConversation(id: string): Promise<void> {
   return fetchApi(`/conversations/${id}`, { method: 'DELETE' });
 }

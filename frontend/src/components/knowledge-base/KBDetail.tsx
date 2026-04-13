@@ -109,7 +109,7 @@ export function KBDetail({ kbId }: { kbId: string }) {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.docx,.txt"
+              accept=".pdf,.docx,.xlsx,.xls,.txt"
               multiple
               onChange={handleFileChange}
               className="hidden"

@@ -53,8 +53,8 @@ export async function* streamApi(
     buffer = lines.pop() || '';
 
     for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6).trim();
+      if (line.startsWith('data:')) {
+        const data = (line.startsWith('data: ') ? line.slice(6) : line.slice(5)).trim();
         if (!data) continue;
         try {
           const parsed = JSON.parse(data);
@@ -62,6 +62,7 @@ export async function* streamApi(
           if (parsed.error) throw new Error(parsed.error);
           yield parsed;
         } catch (e) {
+          console.warn('SSE parse error:', line, e);
           if (e instanceof Error && e.message !== 'Unexpected') throw e;
         }
       }

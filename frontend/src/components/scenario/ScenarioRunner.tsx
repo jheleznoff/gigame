@@ -54,8 +54,12 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
   const [stepHistory, setStepHistory] = useState<StepData[]>([]);
 
   useEffect(() => {
-    if (phase !== 'uploading' && phase !== 'running' && phase !== 'paused') return;
-    const iv = setInterval(() => setElapsed(formatElapsed(startTime)), 1000);
+    if (!startTime) return;
+    const iv = setInterval(() => {
+      if (phase === 'uploading' || phase === 'running' || phase === 'paused') {
+        setElapsed(formatElapsed(startTime));
+      }
+    }, 1000);
     return () => clearInterval(iv);
   }, [phase, startTime]);
 
@@ -409,7 +413,7 @@ export function ScenarioRunner({ scenarioId, onClose }: ScenarioRunnerProps) {
             <Button size="sm" variant="outline" className="w-full mt-2 rounded-xl text-xs" onClick={() => fileInputRef.current?.click()}>
               + Добавить файлы
             </Button>
-            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt" multiple onChange={handleFileChange} className="hidden" />
+            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.xlsx,.xls,.txt" multiple onChange={handleFileChange} className="hidden" />
 
             {/* Debug mode toggle */}
             <label className="flex items-center gap-2 mt-3 px-1 cursor-pointer text-xs select-none">
