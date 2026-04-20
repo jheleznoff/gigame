@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getScenarioRun } from '@/api/scenarios';
@@ -103,7 +104,7 @@ export function ScenarioRunPage() {
                   </span>
                 </div>
                 {/* Input data (new) */}
-                {step.input_data && typeof step.input_data === 'object' && (() => {
+                {!!step.input_data && typeof step.input_data === 'object' && ((): ReactNode => {
                   const inp = step.input_data as { documents_text?: string; previous_output?: string };
                   if (!inp.documents_text && !inp.previous_output) return null;
                   return (
@@ -136,7 +137,7 @@ export function ScenarioRunPage() {
                     </details>
                   );
                 })()}
-                {step.prompt_used && (
+                {!!step.prompt_used && (
                   <details className="mt-2">
                     <summary className="text-xs text-[#7b1fa2] cursor-pointer font-medium">
                       📝 Промпт в GigaChat
@@ -146,7 +147,7 @@ export function ScenarioRunPage() {
                     </pre>
                   </details>
                 )}
-                {step.output_data && (
+                {!!step.output_data && (
                   <details className="mt-2" open={step.status === 'completed'}>
                     <summary className="text-xs text-[#21a038] cursor-pointer font-medium">
                       📤 Результат

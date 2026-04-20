@@ -154,7 +154,7 @@ export function NodeConfigPanel() {
                 <label className="flex items-center gap-2 cursor-pointer text-xs select-none">
                   <input
                     type="checkbox"
-                    checked={data.classify_strict === 'true' || data.classify_strict === true}
+                    checked={data.classify_strict === 'true'}
                     onChange={(e) => updateNodeData(node.id, { classify_strict: e.target.checked ? 'true' : '' })}
                     className="w-3.5 h-3.5 rounded accent-[#00897b]"
                   />
@@ -166,7 +166,7 @@ export function NodeConfigPanel() {
                   узла Switch — он отфильтрует документы по классу и передаст только нужные в каждую ветку.
                 </p>
               </div>
-              {(data.classify_strict === 'true' || data.classify_strict === true) && (
+              {data.classify_strict === 'true' && (
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1.5">
                     Возможные классы
@@ -369,7 +369,7 @@ function SwitchRulesEditor({ rules, onChange, suggestedClasses }: { rules: strin
       ))}
 
       <button
-        onClick={addRule}
+        onClick={() => addRule()}
         className="w-full text-xs border border-dashed border-border rounded-xl px-3 py-2 text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
       >
         + Добавить правило

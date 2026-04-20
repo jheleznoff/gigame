@@ -1,6 +1,7 @@
+import type { ReactElement } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 
-const NODE_STYLES: Record<string, { bg: string; border: string; iconBg: string; icon: JSX.Element; label: string }> = {
+const NODE_STYLES: Record<string, { bg: string; border: string; iconBg: string; icon: ReactElement; label: string }> = {
   input: {
     bg: 'bg-white', border: 'border-[#21a038]', iconBg: 'bg-[#21a038]', label: 'Вход',
     icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>,

@@ -9,7 +9,7 @@ interface KBSelectorProps {
 export function KBSelector({ value, onChange }: KBSelectorProps) {
   const { data: knowledgeBases = [] } = useQuery({
     queryKey: ['knowledge-bases'],
-    queryFn: getKnowledgeBases,
+    queryFn: () => getKnowledgeBases(),
   });
 
   if (knowledgeBases.length === 0) return null;

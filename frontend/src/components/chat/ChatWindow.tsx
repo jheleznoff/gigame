@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getConversation, type Message } from '@/api/chat';
-import { streamApi, type StreamEvent } from '@/api/client';
+import { streamApi } from '@/api/client';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { KBSelector } from './KBSelector';

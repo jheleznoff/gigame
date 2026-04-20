@@ -6,7 +6,6 @@ import {
   Background,
   Controls,
   type Node,
-  type Edge,
   type Connection,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -40,7 +39,6 @@ export function ScenarioEditorPage() {
     onConnect: storeOnConnect,
     selectNode,
     addNode,
-    selectedNodeId,
     execStatuses,
   } = useScenarioStore();
 
